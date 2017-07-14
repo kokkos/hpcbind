@@ -3,6 +3,7 @@
 ################################################################################
 # Check if hwloc commands exist
 ################################################################################
+#HAS_HWLOC: true=0
 declare -i HAS_HWLOC=0
 type hwloc-bind >/dev/null 2>&1
 HAS_HWLOC="${HAS_HWLOC} + $?"
@@ -23,6 +24,7 @@ HAS_HWLOC="${HAS_HWLOC} + $?"
 ################################################################################
 # Check if nvidia-smi exist
 ################################################################################
+#HAS_NVIDIA: true=0
 declare -i HAS_NVIDIA=0
 type nvidia-smi >/dev/null 2>&1
 HAS_NVIDIA="${HAS_NVIDIA} + $?"
@@ -95,12 +97,13 @@ function show_help {
   echo "  to use with a queuing system or mpiexec."
   echo ""
   echo "Options:"
+  echo "  --no-hwloc            Disable using hwloc to set process binding"
   echo "  --proc-bind=<LOC>     Set the initial process mask for the script.  "
   echo "                        LOC can be any valid location argument for"
   echo "                        hwloc-calc. (Default: all)"
   echo "  --distribute=N        Distribute the current proc-bind into N groups" 
   echo "  --index=I             Use the i'th group (zero based)" 
-  echo "  --visible-gpus        Comma separated list of gpu ids"
+  echo "  --visible-gpus=<L>    Comma separated list of gpu ids"
   echo "                        Default: CUDA_VISIBLE_DEVICES or all gpus in"
   echo "                        sequential order"
   echo "  --gpu-ignore-queue    Ignore queue job id when choosing visible GPU"
@@ -114,7 +117,7 @@ function show_help {
   echo "  --force-openmp-proc-bind=<OP>"
   echo "                        Override logic for selecting OMP_PROC_BIND."
   echo "  --no-openmp-nested    Set OMP_NESTED to false"
-  echo "  --test-bindings       Show the bindings without executiong a command"
+  echo "  --test-bindings       Show the bindings without executing a command"
   echo "  -v|--verbose          Show options and relevant environment variables" 
   echo "  -h|--help             Show this message" 
   echo ""
@@ -158,6 +161,10 @@ VERBOSE=False
 for i in $@; do
   case $i in
     # number of partitions to create
+    --no-hwloc)
+      HAS_HWLOC=1
+      shift
+      ;;
     --proc-bind=*)
       PROC_BIND="${i#*=}"
       shift
@@ -413,10 +420,8 @@ if [[ "${TEST_BINDINGS}" == "False" ]]; then
 else
   if [[ ${HAS_HWLOC} -eq 0 ]]; then
     if [[ -v DISPLAY ]]; then
-      echo "hi"
       hwloc-bind ${CPUSET} -- lstopo --pid 0
     else
-      echo "bye"
       hwloc-ls --restrict ${CPUSET}
     fi
   else
