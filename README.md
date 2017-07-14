@@ -49,3 +49,6 @@ Sample Usage:
   Display the current bindings
     hpcbind --proc-bind=numa:0.core:odd --test-bindings -v
 ```
+
+
+See https://github.com/open-mpi/hwloc for more information about hwloc
