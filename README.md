@@ -1,4 +1,4 @@
-#Purpose
+# Purpose
 
 A script to set the process mask, OMP environment variables and CUDA environment
 variables to sane values if possible. Uses hwloc and nvidia-smi if available.  
