@@ -180,7 +180,7 @@ for i in $@; do
       shift
       ;;
     --visible-gpus=*)
-      VISIBLE_GPUS=($(echo "${i#*=}" | tr ',' ' '))
+      VISIBLE_GPUS=$(echo "${i#*=}" | tr ',' ' ')
       shift
       ;;
     --gpu-ignore-queue)
@@ -249,7 +249,7 @@ done
 ################################################################################
 # Check unknown arguments
 ################################################################################
-if [[ ${#UNKNOWN_ARGS[*]} > 0 ]]; then
+if [[ ${#UNKNOWN_ARGS[@]} > 0 ]]; then
   echo "Uknown options: ${UNKNOWN_ARGS[*]}"
   exit 1
 fi
@@ -268,14 +268,15 @@ fi
 ################################################################################
 # Check that visible gpus are valid
 ################################################################################
+VISIBLE_GPUS_LIST=(${VISIBLE_GPUS})
 if [[ "${GPU_MAPPING}" == "True" ]]; then
-  for ((i=0; i < ${#VISIBLE_GPUS[*]}; i++)); do
-    if [[ ${VISIBLE_GPUS[$i]} -ge ${NUM_GPUS} || ${VISIBLE_GPUS[$i]} -lt 0 ]]; then
-      echo "Invaild GPU ID ${VISIBLE_GPUS[$i]}, setting to 0"
-      VISIBLE_GPUS[$i]=0;
+  for ((i=0; i < ${#VISIBLE_GPUS_LIST[@]}; i++)); do
+    if [[ ${VISIBLE_GPUS_LIST[$i]} -ge ${NUM_GPUS} || ${VISIBLE_GPUS_LIST[$i]} -lt 0 ]]; then
+      echo "Invaild GPU ID ${VISIBLE_GPUS_LIST[$i]}, setting to 0"
+      VISIBLE_GPUS_LIST[$i]=0;
     fi
   done
-  NUM_GPUS=${#VISIBLE_GPUS[*]}
+  NUM_GPUS=${#VISIBLE_GPUS_LIST[@]}
 fi
 
 
@@ -374,11 +375,11 @@ export OMP_NESTED=${OPENMP_NESTED}
 if [[ "${GPU_MAPPING}" == "True" ]]; then
   if [[ "${GPU_IGNORE_QUEUE}" == "True" ]]; then
     declare -i GPU_ID=$((INDEX % NUM_GPUS)) 
-    export CUDA_VISIBLE_DEVICES=${VISIBLE_GPUS[${GPU_ID}]}
+    export CUDA_VISIBLE_DEVICES=${VISIBLE_GPUS_LIST[${GPU_ID}]}
   else
     declare -i MY_TASK_ID=$((MY_QUEUE_ID * DISTRIBUTE + INDEX))
     declare -i GPU_ID=$((MY_TASK_ID % NUM_GPUS)) 
-    export CUDA_VISIBLE_DEVICES=${VISIBLE_GPUS[${GPU_ID}]}
+    export CUDA_VISIBLE_DEVICES=${VISIBLE_GPUS_LIST[${GPU_ID}]}
   fi
 fi
 
