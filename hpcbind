@@ -45,7 +45,7 @@ declare -i NUM_GPUS=0
 VISIBLE_GPUS=""
 if [[ ${HAS_NVIDIA} -eq 0 ]]; then
   NUM_GPUS=$(nvidia-smi -L | wc -l);
-  if [[ -v ${CUDA_VISIBLE_DEVICES} ]]; then
+  if [[ -v CUDA_VISIBLE_DEVICES ]]; then
     VISIBLE_GPUS=${CUDA_VISIBLE_DEVICES}
   else
     VISIBLE_GPUS="$( seq 0 $((NUM_GPUS-1)) )"
@@ -68,18 +68,15 @@ MY_QUEUE=""
 MY_QUEUE_ID="0"
 GPU_IGNORE_QUEUE="True"
 
-if [[ -v ${SLURM_LOCAL_ID} ]]; then
-  echo "sbatch"
+if [[ -v SLURM_LOCAL_ID ]]; then
   GPU_IGNORE_QUEUE="False"
   MY_QUEUE="sbatch"
   MY_QUEUE_ID=${SLURM_LOCAL_ID}
-elif [[ -v ${LBS_JOBINDEX} ]]; then
-  echo "bsub"
+elif [[ -v LBS_JOBINDEX ]]; then
   GPU_IGNORE_QUEUE="False"
   MY_QUEUE="bsub"
   MY_QUEUE_ID=${LBS_JOBINDEX}
-elif [[ -v ${ALPS_APP_PE} ]]; then
-  echo "aprun"
+elif [[ -v ALPS_APP_PE ]]; then
   GPU_IGNORE_QUEUE="False"
   MY_QUEUE="aprun"
   MY_QUEUE_ID=${ALPS_APP_PE}
@@ -117,6 +114,7 @@ function show_help {
   echo "  --force-openmp-proc-bind=<OP>"
   echo "                        Override logic for selecting OMP_PROC_BIND."
   echo "  --no-openmp-nested    Set OMP_NESTED to false"
+  echo "  --test-bindings       Show the bindings without executiong a command"
   echo "  -v|--verbose          Show options and relevant environment variables" 
   echo "  -h|--help             Show this message" 
   echo ""
@@ -129,6 +127,8 @@ function show_help {
   echo "    ${cmd} --proc-bind=core:0-63 --distribute=4 --index=0 -- command ..."
   echo "  skip GPU 0 when mapping visible devices"
   echo "    ${cmd} --distribute=4 --index=0 --visible-gpus=1,2 -v -- command ..."
+  echo "  Display the current bindings"
+  echo "    ${cmd} --proc-bind=numa:0 --test-bindings -v"
   echo ""
 }
 
@@ -152,6 +152,7 @@ OPENMP_PLACES=${OMP_PLACES:-threads}
 OPENMP_PROC_BIND=True
 FORCE_OPENMP_PROC_BIND=""
 OPENMP_NESTED=${OMP_NESTED:-true}
+TEST_BINDINGS="False"
 VERBOSE=False
 
 for i in $@; do
@@ -204,6 +205,10 @@ for i in $@; do
       ;;
     --no-openmp-nested)
       OPENMP_NESTED="false"
+      shift
+      ;;
+    --test-bindings)
+      TEST_BINDINGS="True"
       shift
       ;;
     -v|--verbose)
@@ -372,6 +377,9 @@ fi
 if [[ "${VERBOSE}" == "True" ]]; then
   echo "[HPCBIND]"
   if [[ ${HAS_HWLOC} -eq 0 ]]; then
+    if [[ "${MY_QUEUE}" != "" ]]; then
+      echo "queue=${MY_QUEUE}"
+    fi
     echo "hwloc=true"
     echo "proc_bind=${PROC_BIND}"
     echo "distribute=${DISTRIBUTE}"
@@ -396,8 +404,22 @@ fi
 # Run command 
 ################################################################################
 
-if [[ ${HAS_HWLOC} -eq 0 ]]; then
-  hwloc-bind ${CPUSET} -- $@
+if [[ "${TEST_BINDINGS}" == "False" ]]; then
+  if [[ ${HAS_HWLOC} -eq 0 ]]; then
+    hwloc-bind ${CPUSET} -- $@
+  else
+    eval $@
+  fi
 else
-  eval $@
+  if [[ ${HAS_HWLOC} -eq 0 ]]; then
+    if [[ -v DISPLAY ]]; then
+      echo "hi"
+      hwloc-bind ${CPUSET} -- lstopo --pid 0
+    else
+      echo "bye"
+      hwloc-ls --restrict ${CPUSET}
+    fi
+  else
+    echo "Unable to test bindings, hwloc not available."  
+  fi
 fi
