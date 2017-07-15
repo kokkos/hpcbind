@@ -3,82 +3,75 @@
 ################################################################################
 # Check if hwloc commands exist
 ################################################################################
-#HAS_HWLOC: true=0
-declare -i HAS_HWLOC=0
+declare -i HPCBIND_HAS_HWLOC=1
 type hwloc-bind >/dev/null 2>&1
-HAS_HWLOC="${HAS_HWLOC} + $?"
+HPCBIND_HAS_HWLOC=$((HPCBIND_HAS_HWLOC & ! $?))
 
 type hwloc-distrib >/dev/null 2>&1
-HAS_HWLOC="${HAS_HWLOC} + $?"
+HPCBIND_HAS_HWLOC=$((HPCBIND_HAS_HWLOC & ! $?))
 
 type hwloc-ls >/dev/null 2>&1
-HAS_HWLOC="${HAS_HWLOC} + $?"
+HPCBIND_HAS_HWLOC=$((HPCBIND_HAS_HWLOC & ! $?))
 
 type hwloc-calc >/dev/null 2>&1
-HAS_HWLOC="${HAS_HWLOC} + $?"
+HPCBIND_HAS_HWLOC=$((HPCBIND_HAS_HWLOC & ! $?))
 
 type hwloc-ps >/dev/null 2>&1
-HAS_HWLOC="${HAS_HWLOC} + $?"
+HPCBIND_HAS_HWLOC=$((HPCBIND_HAS_HWLOC & ! $?))
 
+if [[ ${HPCBIND_HAS_HWLOC} -eq 0 ]]; then
+  echo "hwloc not found, no process binding will occur"
+fi
+
+# Get parent cpuset
+HPCBIND_HWLOC_PARENT_CPUSET=""
+if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
+  MY_PID="$BASHPID"
+  HPCBIND_HWLOC_PARENT_CPUSET=$(hwloc-ps --cpuset | grep "${MY_PID}" | cut -f 2)
+fi
 
 ################################################################################
 # Check if nvidia-smi exist
 ################################################################################
-#HAS_NVIDIA: true=0
-declare -i HAS_NVIDIA=0
+declare -i HPCBIND_HAS_NVIDIA=0
 type nvidia-smi >/dev/null 2>&1
-HAS_NVIDIA="${HAS_NVIDIA} + $?"
-
-
-################################################################################
-# Get current cpuset
-################################################################################
-CURRENT_CPUSET=""
-if [[ ${HAS_HWLOC} -eq 0 ]]; then
-  MY_PID="$BASHPID"
-  CURRENT_CPUSET=$(hwloc-ps --cpuset | grep "${MY_PID}" | cut -f 2)
-fi
+HPCBIND_HAS_NVIDIA=$((!$?))
 
 
 ################################################################################
 # Get visible gpu
 ################################################################################
 declare -i NUM_GPUS=0
-VISIBLE_GPUS=""
-if [[ ${HAS_NVIDIA} -eq 0 ]]; then
+HPCBIND_VISIBLE_GPUS=""
+if [[ ${HPCBIND_HAS_NVIDIA} -eq 1 ]]; then
   NUM_GPUS=$(nvidia-smi -L | wc -l);
   GPU_LIST="$( seq 0 $((NUM_GPUS-1)) )"
-  VISIBLE_GPUS=${CUDA_VISIBLE_DEVICES:-${GPU_LIST}}
+  HPCBIND_VISIBLE_GPUS=${CUDA_VISIBLE_DEVICES:-${GPU_LIST}}
 fi
 
-GPU_MAPPING=""
-if [[ ${NUM_GPUS} -gt 0 ]]; then
-  GPU_MAPPING="True"
-else
-  GPU_MAPPING="False"
-fi
+declare -i HPCBIND_ENABLE_GPU_MAPPING=$((NUM_GPUS > 0))
 
 
 ################################################################################
 # Get queue id
 # supports sbatch, bsub, aprun
 ################################################################################
-MY_QUEUE=""
-MY_QUEUE_ID="0"
-GPU_IGNORE_QUEUE="True"
+HPCBIND_QUEUE_NAME=""
+declare -i HPCBIND_QUEUE_INDEX=0
+declare -i HPCBIND_QUEUE_GPU_MAPPING=0
 
 if [[ ! -z "${SLURM_LOCAL_ID}" ]]; then
-  GPU_IGNORE_QUEUE="False"
-  MY_QUEUE="sbatch"
-  MY_QUEUE_ID=${SLURM_LOCAL_ID}
+  HPCBIND_QUEUE_GPU_MAPPING=1
+  HPCBIND_QUEUE_NAME="sbatch"
+  HPCBIND_QUEUE_INDEX=${SLURM_LOCAL_ID}
 elif [[ ! -z "${LBS_JOBINDEX}" ]]; then
-  GPU_IGNORE_QUEUE="False"
-  MY_QUEUE="bsub"
-  MY_QUEUE_ID=${LBS_JOBINDEX}
+  HPCBIND_QUEUE_GPU_MAPPING=1
+  HPCBIND_QUEUE_NAME="bsub"
+  HPCBIND_QUEUE_INDEX=${LBS_JOBINDEX}
 elif [[ ! -z "${ALPS_APP_PE}" ]]; then
-  GPU_IGNORE_QUEUE="False"
-  MY_QUEUE="aprun"
-  MY_QUEUE_ID=${ALPS_APP_PE}
+  HPCBIND_QUEUE_GPU_MAPPING=1
+  HPCBIND_QUEUE_NAME="aprun"
+  HPCBIND_QUEUE_INDEX=${ALPS_APP_PE}
 fi
 
 
@@ -87,19 +80,20 @@ fi
 ################################################################################
 function show_help {
   local cmd=$(basename "$0")
-  echo "Usage: ${cmd} <options> -- command ..." 
+  echo "Usage: ${cmd} <options> -- command ..."
   echo "  Set the process mask, OMP environment variables and CUDA environment"
   echo "  variables to sane values if possible. Uses hwloc and nvidia-smi if"
   echo "  available.  Will preserve the current process binding, so it is safe"
   echo "  to use with a queuing system or mpiexec."
   echo ""
   echo "Options:"
-  echo "  --no-hwloc            Disable using hwloc to set process binding"
+  echo "  --no-hwloc-bind       Disable binding"
   echo "  --proc-bind=<LOC>     Set the initial process mask for the script.  "
   echo "                        LOC can be any valid location argument for"
   echo "                        hwloc-calc. (Default: all)"
-  echo "  --distribute=N        Distribute the current proc-bind into N groups" 
-  echo "  --index=I             Use the i'th group (zero based)" 
+  echo "  --distribute=N        Distribute the current cpuset into N partitions"
+  echo "  --distribute-partition=I"
+  echo "                        Use the i'th partition (zero based)"
   echo "  --visible-gpus=<L>    Comma separated list of gpu ids"
   echo "                        Default: CUDA_VISIBLE_DEVICES or all gpus in"
   echo "                        sequential order"
@@ -110,28 +104,30 @@ function show_help {
   echo "  --openmp-percent=N    Integer percentage of cpuset to use for OpenMP"
   echo "                        threads.  Default: 100"
   echo "  --openmp-places=<Op>  Op=threads|cores|sockets. Default: threads"
-  echo "  --no-openmp-proc-bind Set OMP_PROC_BIND to false and unset OMP_PLACES"    
+  echo "  --no-openmp-proc-bind Set OMP_PROC_BIND to false and unset OMP_PLACES"
+  echo "  --force-openmp-num-threads=N"
+  echo "                        Override logic for selecting OMP_NUM_THREADS."
   echo "  --force-openmp-proc-bind=<OP>"
   echo "                        Override logic for selecting OMP_PROC_BIND."
   echo "  --no-openmp-nested    Set OMP_NESTED to false"
-  echo "  --test-bindings       Show the bindings without executing a command"
-  echo "  --test-bindings-text  Show the bindings as text"
-  echo "  -v|--verbose          Show options and relevant environment variables" 
-  echo "  -h|--help             Show this message" 
+  echo "  --show-bindings       Show the bindings"
+  echo "  --lstopo              Show bindings in lstopo without executing a command"
+  echo "  -v|--verbose          Show options and relevant environment variables"
+  echo "  -h|--help             Show this message"
   echo ""
   echo "Sample Usage:"
-  echo "  Split the current process cpuset into 4 and use the 3rd group"
-  echo "    ${cmd} --distribute=4 --index=2 -v -- command ..."
+  echo "  Split the current process cpuset into 4 and use the 3rd partition"
+  echo "    ${cmd} --distribute=4 --distribute-partition=2 -v -- command ..."
   echo "  Bing the process to all even cores"
   echo "    ${cmd} --proc-bind=core:even -v -- command ..."
   echo "  Bind to the first 64 cores and split the current process cpuset into 4"
-  echo "    ${cmd} --proc-bind=core:0-63 --distribute=4 --index=0 -- command ..."
+  echo "    ${cmd} --proc-bind=core:0-63 --distribute=4 --distribute-partition=0 -- command ..."
   echo "  skip GPU 0 when mapping visible devices"
-  echo "    ${cmd} --distribute=4 --index=0 --visible-gpus=1,2 -v -- command ..."
+  echo "    ${cmd} --distribute=4 --distribute-partition=0 --visible-gpus=1,2 -v -- command ..."
   echo "  Display the current bindings"
-  echo "    ${cmd} --proc-bind=numa:0 --test-bindings -v"
-  echo "  Display the current bindings"
-  echo "    ${cmd} --proc-bind=numa:0.core:odd --test-bindings -v"
+  echo "    ${cmd} --proc-bind=numa:0 --show-bindings -- command"
+  echo "  Display the current bindings using lstopo"
+  echo "    ${cmd} --proc-bind=numa:0.core:odd --lstopo"
   echo ""
 }
 
@@ -141,91 +137,100 @@ function show_help {
 ################################################################################
 # Show help if no command line arguments given
 if [[ "$#" -eq 0 ]]; then
-  show_help 
+  show_help
   exit 0
 fi
 
 declare -a UNKNOWN_ARGS=()
-declare -i DISTRIBUTE=1
-declare -i INDEX=0
-PROC_BIND="all"
-OPENMP_VERSION=4.0
-declare -i OPENMP_PERCENT=100
-OPENMP_PLACES=${OMP_PLACES:-threads}
-OPENMP_PROC_BIND=True
-FORCE_OPENMP_PROC_BIND=""
-OPENMP_NESTED=${OMP_NESTED:-true}
-TEST_BINDINGS="False"
-TEST_BINDINGS_TEXT="False"
-VERBOSE=False
+declare -i HPCBIND_ENABLE_HWLOC_BIND=${HPCBIND_HAS_HWLOC}
+declare -i HPCBIND_DISTRIBUTE=1
+declare -i HPCBIND_PARTITION=0
+HPCBIND_PROC_BIND="all"
+HPCBIND_OPENMP_VERSION=4.0
+declare -i HPCBIND_OPENMP_PERCENT=100
+HPCBIND_OPENMP_PLACES=${OMP_PLACES:-threads}
+declare -i HPCBIND_OPENMP_PROC_BIND=1
+declare -i HPCBIND_OPENMP_FORCE_NUM_THREADS=-1
+HPCBIND_OPENMP_FORCE_PROC_BIND=""
+HPCBIND_OPENMP_NESTED=${OMP_NESTED:-true}
+declare -i HPCBIND_VERBOSE=0
+
+declare -i HPCBIND_SHOW_BINDINGS=0
+declare -i HPCBIND_LSTOPO=0
 
 for i in $@; do
   case $i in
     # number of partitions to create
-    --no-hwloc)
-      HAS_HWLOC=1
+    --no-hwloc-bind)
+      HPCBIND_ENABLE_HWLOC_BIND=0
       shift
       ;;
     --proc-bind=*)
-      PROC_BIND="${i#*=}"
+      HPCBIND_PROC_BIND="${i#*=}"
       shift
       ;;
     --distribute=*)
-      DISTRIBUTE="${i#*=}"
+      HPCBIND_DISTRIBUTE="${i#*=}"
       shift
       ;;
-    # which group to use
-    --index=*)
-      INDEX="${i#*=}"
+    # which partition to use
+    --distribute-partition=*)
+      HPCBIND_PARTITION="${i#*=}"
       shift
       ;;
     --visible-gpus=*)
-      VISIBLE_GPUS=$(echo "${i#*=}" | tr ',' ' ')
+      HPCBIND_VISIBLE_GPUS=$(echo "${i#*=}" | tr ',' ' ')
       shift
       ;;
     --gpu-ignore-queue)
-      GPU_IGNORE_QUEUE="True"
+      HPCBIND_QUEUE_GPU_MAPPING=0
       shift
       ;;
     --no-gpu-mapping)
-      GPU_MAPPING="False"
+      HPCBIND_ENABLE_GPU_MAPPING=0
       shift
       ;;
     --openmp=*)
-      OPENMP_VERSION="${i#*=}"
+      HPCBIND_OPENMP_VERSION="${i#*=}"
       shift
       ;;
     --openmp-percent=*)
-      OPENMP_PERCENT="${i#*=}"
+      HPCBIND_OPENMP_PERCENT="${i#*=}"
       shift
       ;;
     --openmp-places=*)
-      OPENMP_PLACES="${i#*=}"
+      HPCBIND_OPENMP_PLACES="${i#*=}"
       shift
       ;;
     --no-openmp-proc-bind)
-      OPENMP_PROC_BIND="False"
+      HPCBIND_OPENMP_PROC_BIND=0
       shift
       ;;
     --force-openmp-proc-bind=*)
-      FORCE_OPENMP_PROC_BIND="${i#*=}"
+      HPCBIND_OPENMP_FORCE_PROC_BIND="${i#*=}"
+      shift
+      ;;
+    --force-openmp-num-threads=*)
+      HPCBIND_OPENMP_FORCE_NUM_THREADS="${i#*=}"
       shift
       ;;
     --no-openmp-nested)
-      OPENMP_NESTED="false"
+      HPCBIND_OPENMP_NESTED="false"
       shift
       ;;
-    --test-bindings)
-      TEST_BINDINGS="True"
+    --show-bindings)
+      HPCBIND_VERBOSE=1
+      HPCBIND_SHOW_BINDINGS=1
       shift
       ;;
-    --test-bindings-text)
-      TEST_BINDINGS="True"
-      TEST_BINDINGS_TEXT="True"
+    --lstopo)
+      HPCBIND_VERBOSE=1
+      HPCBIND_SHOW_BINDINGS=0
+      HPCBIND_LSTOPO=1
       shift
       ;;
     -v|--verbose)
-      VERBOSE="True"
+      HPCBIND_VERBOSE=1
       shift
       ;;
     -h|--help)
@@ -249,105 +254,100 @@ done
 ################################################################################
 # Check unknown arguments
 ################################################################################
-if [[ ${#UNKNOWN_ARGS[@]} > 0 ]]; then
+if [[ ${#UNKNOWN_ARGS[*]} > 0 ]]; then
   echo "Uknown options: ${UNKNOWN_ARGS[*]}"
   exit 1
 fi
 
 
 ################################################################################
-# Check hwloc
-################################################################################
-if [[ ${HAS_HWLOC} -ne 0 ]]; then
-  echo "hwloc not found, no process binding will occur"
-  DISTRIBUTE=1
-  INDEX=0
-fi
-
-
-################################################################################
 # Check that visible gpus are valid
 ################################################################################
-VISIBLE_GPUS_LIST=(${VISIBLE_GPUS})
-if [[ "${GPU_MAPPING}" == "True" ]]; then
-  for ((i=0; i < ${#VISIBLE_GPUS_LIST[@]}; i++)); do
-    if [[ ${VISIBLE_GPUS_LIST[$i]} -ge ${NUM_GPUS} || ${VISIBLE_GPUS_LIST[$i]} -lt 0 ]]; then
-      echo "Invaild GPU ID ${VISIBLE_GPUS_LIST[$i]}, setting to 0"
-      VISIBLE_GPUS_LIST[$i]=0;
+HPCBIND_VISIBLE_GPUS=(${HPCBIND_VISIBLE_GPUS})
+if [[ ${HPCBIND_ENABLE_GPU_MAPPING} -eq 1 ]]; then
+  for ((i=0; i < ${#HPCBIND_VISIBLE_GPUS[*]}; i++)); do
+    if [[ ${HPCBIND_VISIBLE_GPUS[$i]} -ge ${NUM_GPUS} ||
+      ${HPCBIND_VISIBLE_GPUS[$i]} -lt 0 ]]; then
+      echo "Invaild GPU ID ${HPCBIND_VISIBLE_GPUS[$i]}, setting to 0"
+      HPCBIND_VISIBLE_GPUS[$i]=0;
     fi
   done
-  NUM_GPUS=${#VISIBLE_GPUS_LIST[@]}
+  NUM_GPUS=${#HPCBIND_VISIBLE_GPUS[@]}
 fi
 
 
 ################################################################################
 # Check OpenMP percent
 ################################################################################
-if [[ ${OPENMP_PERCENT} -lt 1 ]]; then 
+if [[ ${HPCBIND_OPENMP_PERCENT} -lt 1 ]]; then
   echo "OpenMP percent < 1, setting to 1"
-  OPENMP_PERCENT=1
-elif [[ ${OPENMP_PERCENT} -gt 100 ]]; then 
+  HPCBIND_OPENMP_PERCENT=1
+elif [[ ${HPCBIND_OPENMP_PERCENT} -gt 100 ]]; then
   echo "OpenMP percent > 100, setting to 100"
-  OPENMP_PERCENT=100
+  HPCBIND_OPENMP_PERCENT=100
 fi
 
 ################################################################################
 # Check distribute
 ################################################################################
-if [[ ${DISTRIBUTE} -le 0 ]]; then
+if [[ ${HPCBIND_DISTRIBUTE} -le 0 ]]; then
   echo "Invalid input for distribute, changing distribute to 1"
-  DISTRIBUTE=1
+  HPCBIND_DISTRIBUTE=1
 fi
 
-if [[ ${INDEX} -ge ${DISTRIBUTE} ]]; then
-  echo "Invalid input for index, changing index to 0"
-  INDEX=0
+if [[ ${HPCBIND_PARTITION} -ge ${HPCBIND_DISTRIBUTE} ]]; then
+  echo "Invalid input for distribute-partition, changing to 0"
+  HPCBIND_PARTITION=0
 fi
 
 
 ################################################################################
 # Find cpuset and num threads
 ################################################################################
-CPUSET=""
-declare -i NUM_THREADS=0
+HPCBIND_HWLOC_CPUSET=""
+declare -i HPCBIND_NUM_PUS=0
 
-if [[ ${HAS_HWLOC} -eq 0 ]]; then
-  if [[ "${CURRENT_CPUSET}" == "" ]]; then
-    BINDING=$(hwloc-calc ${PROC_BIND})
-  else 
-    BINDING=$(hwloc-calc --restrict ${CURRENT_CPUSET} ${PROC_BIND})
+if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
+  if [[ "${HPCBIND_HWLOC_PARENT_CPUSET}" == "" ]]; then
+    BINDING=$(hwloc-calc ${HPCBIND_PROC_BIND})
+  else
+    BINDING=$(hwloc-calc --restrict ${HPCBIND_HWLOC_PARENT_CPUSET} ${HPCBIND_PROC_BIND})
   fi
 
-  CPUSETS=($(hwloc-distrib --restrict ${BINDING} --at core ${DISTRIBUTE}))
-  CPUSET=${CPUSETS[${INDEX}]}
-  NUM_THREADS=$(hwloc-ls --restrict ${CPUSET} --only pu | wc -l)
+  CPUSETS=($(hwloc-distrib --restrict ${BINDING} --at core ${HPCBIND_DISTRIBUTE}))
+  HPCBIND_HWLOC_CPUSET=${CPUSETS[${HPCBIND_PARTITION}]}
+  HPCBIND_NUM_PUS=$(hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only pu | wc -l)
 else
-  NUM_THREADS=$(cat /proc/cpuinfo | grep -c processor)
+  HPCBIND_NUM_PUS=$(cat /proc/cpuinfo | grep -c processor)
 fi
 
-declare -i OPENMP_NUM_THREADS=$((NUM_THREADS * OPENMP_PERCENT))
-OPENMP_NUM_THREADS=$((OPENMP_NUM_THREADS / 100))
+declare -i HPCBIND_OPENMP_NUM_THREADS=$((HPCBIND_NUM_PUS * HPCBIND_OPENMP_PERCENT))
+HPCBIND_OPENMP_NUM_THREADS=$((HPCBIND_OPENMP_NUM_THREADS / 100))
 
-if [[ ${OPENMP_NUM_THREADS} -lt 1 ]]; then
-  OPENMP_NUM_THREADS=1
-elif [[ ${OPENMP_NUM_THREADS} -gt ${NUM_THREADS} ]]; then
-  OPENMP_NUM_THREADS=${NUM_THREADS}
+
+if [[ ${HPCBIND_OPENMP_NUM_THREADS} -lt 1 ]]; then
+  HPCBIND_OPENMP_NUM_THREADS=1
+elif [[ ${HPCBIND_OPENMP_NUM_THREADS} -gt ${HPCBIND_NUM_PUS} ]]; then
+  HPCBIND_OPENMP_NUM_THREADS=${HPCBIND_NUM_PUS}
 fi
 
+if [[ ${HPCBIND_OPENMP_FORCE_NUM_THREADS} -gt 0 ]]; then
+  HPCBIND_OPENMP_NUM_THREADS=${HPCBIND_OPENMP_FORCE_NUM_THREADS}
+fi
 
 ################################################################################
 # Set OpenMP environment variables
 ################################################################################
 
 # set OMP_NUM_THREADS
-export OMP_NUM_THREADS=${OPENMP_NUM_THREADS}
+export OMP_NUM_THREADS=${HPCBIND_OPENMP_NUM_THREADS}
 
 # set OMP_PROC_BIND and OMP_PLACES
-if [[ "${OPENMP_PROC_BIND}" == "True" ]]; then
-  if [[ "${FORCE_OPENMP_PROC_BIND}" == "" ]]; then
+if [[ ${HPCBIND_OPENMP_PROC_BIND} -eq 1 ]]; then
+  if [[ "${HPCBIND_OPENMP_FORCE_PROC_BIND}" == "" ]]; then
     #default proc bind logic
-    if [[ "${OPENMP_VERSION}" == "4.0" || "${OPENMP_VERSION}" > "4.0" ]]; then
-      export OMP_PLACES="${OPENMP_PLACES}"
+    if [[ "${HPCBIND_OPENMP_VERSION}" == "4.0" || "${HPCBIND_OPENMP_VERSION}" > "4.0" ]]; then
+      export OMP_PLACES="${HPCBIND_OPENMP_PLACES}"
       export OMP_PROC_BIND="spread"
     else
       export OMP_PROC_BIND="true"
@@ -355,8 +355,8 @@ if [[ "${OPENMP_PROC_BIND}" == "True" ]]; then
     fi
   else
     #force proc bind
-    export OMP_PLACES="${OPENMP_PLACES}"
-    export OMP_PROC_BIND="${FORCE_OPENMP_PROC_BIND}"
+    export OMP_PLACES="${HPCBIND_OPENMP_PLACES}"
+    export OMP_PROC_BIND="${HPCBIND_OPENMP_FORCE_PROC_BIND}"
   fi
 else
   # no openmp proc bind
@@ -365,73 +365,90 @@ else
 fi
 
 # set OMP_NESTED
-export OMP_NESTED=${OPENMP_NESTED}
+export OMP_NESTED=${HPCBIND_OPENMP_NESTED}
 
 
 ################################################################################
 # Set CUDA environment variables
 ################################################################################
 
-if [[ "${GPU_MAPPING}" == "True" ]]; then
-  if [[ "${GPU_IGNORE_QUEUE}" == "True" ]]; then
-    declare -i GPU_ID=$((INDEX % NUM_GPUS)) 
-    export CUDA_VISIBLE_DEVICES=${VISIBLE_GPUS_LIST[${GPU_ID}]}
+if [[ ${HPCBIND_ENABLE_GPU_MAPPING} -eq 1 ]]; then
+  if [[ ${HPCBIND_QUEUE_GPU_MAPPING} -eq 0 ]]; then
+    declare -i GPU_ID=$((HPCBIND_PARTITION % NUM_GPUS))
+    export CUDA_VISIBLE_DEVICES=${HPCBIND_VISIBLE_GPUS[${GPU_ID}]}
   else
-    declare -i MY_TASK_ID=$((MY_QUEUE_ID * DISTRIBUTE + INDEX))
-    declare -i GPU_ID=$((MY_TASK_ID % NUM_GPUS)) 
-    export CUDA_VISIBLE_DEVICES=${VISIBLE_GPUS_LIST[${GPU_ID}]}
+    declare -i MY_TASK_ID=$((HPCBIND_QUEUE_INDEX * HPCBIND_DISTRIBUTE + HPCBIND_PARTITION))
+    declare -i GPU_ID=$((MY_TASK_ID % NUM_GPUS))
+    export CUDA_VISIBLE_DEVICES=${HPCBIND_VISIBLE_GPUS[${GPU_ID}]}
   fi
+fi
+
+################################################################################
+# Set hpcbind environment variables
+################################################################################
+export HPCBIND_HAS_HWLOC=${HPCBIND_HAS_HWLOC}
+export HPCBIND_HAS_NVIDIA=${HPCBIND_HAS_NVIDIA}
+export HPCBIND_NUM_PUS=${HPCBIND_NUM_PUS}
+export HPCBIND_HWLOC_CPUSET=${HPCBIND_HWLOC_CPUSET}
+export HPCBIND_HWLOC_DISTRIBUTE=${HPCBIND_DISTRIBUTE}
+export HPCBIND_HWLOC_DISTRIBUTE_PARTITION=${HPCBIND_PARTITION}
+if [[ "${HPCBIND_HWLOC_PARENT_CPUSET}" == "" ]]; then
+  export HPCBIND_HWLOC_PARENT_CPUSET="all"
+else
+  export HPCBIND_HWLOC_PARENT_CPUSET=${HPCBIND_HWLOC_PARENT_CPUSET}
+fi
+export HPCBIND_HWLOC_PROC_BIND=${HPCBIND_PROC_BIND}
+export HPCBIND_NVIDIA_ENABLE_GPU_MAPPING=${HPCBIND_ENABLE_GPU_MAPPING}
+export HPCBIND_NVIDIA_VISIBLE_GPUS=$(echo "${HPCBIND_VISIBLE_GPUS[*]}" | tr ' ' ',')
+export HPCBIND_OPENMP_VERSION=${HPCBIND_OPENMP_VERSION}
+if [[ "${HPCBIND_QUEUE_NAME}" != "" ]]; then
+  export HPCBIND_QUEUE_INDEX=${HPCBIND_QUEUE_INDEX}
+  export HPCBIND_QUEUE_NAME=${HPCBIND_QUEUE_NAME}
+  export HPCBIND_QUEUE_GPU_MAPPING=${HPCBIND_QUEUE_GPU_MAPPING}
 fi
 
 
 ################################################################################
-# Print verbose 
+# Print verbose
 ################################################################################
 
-if [[ "${VERBOSE}" == "True" ]]; then
+if [[ ${HPCBIND_VERBOSE} -eq 1 ]]; then
+  MY_ENV=$(env | sort)
   echo "[HPCBIND]"
-  if [[ ${HAS_HWLOC} -eq 0 ]]; then
-    if [[ "${MY_QUEUE}" != "" ]]; then
-      echo "queue=${MY_QUEUE}"
-    fi
-    echo "hwloc=true"
-    echo "proc_bind=${PROC_BIND}"
-    echo "distribute=${DISTRIBUTE}"
-    echo "index=${INDEX}"
-    if [[ "${CURRENT_CPUSET}" == "" ]]; then
-      echo "parent_cpuset=all"
-    else
-      echo "parent_cpuset=${CURRENT_CPUSET}"
-    fi
-    echo "cpuset=${CPUSET}"
-  else
-    echo "hwloc=false"
-  fi
-  echo "OpenMP: ${OPENMP_VERSION}"
-  echo "$(env | sort | grep OMP_)"
-  echo "$(env | sort | grep CUDA_)"
-  echo ""
+  echo "${MY_ENV}" | grep -E "^HPCBIND_"
+  echo "[CUDA]"
+  echo "${MY_ENV}" | grep -E "^CUDA_"
+  echo "[OPENMP]"
+  echo "${MY_ENV}" | grep -E "^OMP_"
+fi
 
+if [[ ${HPCBIND_HAS_HWLOC} -eq 1 && ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
+  echo "[BINDINGS]"
+  hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only pu
+elif [[ ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
+  echo "Unable to show bindings, hwloc not available."
 fi
 
 ################################################################################
-# Run command 
+# Run command
 ################################################################################
 
-if [[ "${TEST_BINDINGS}" == "False" ]]; then
-  if [[ ${HAS_HWLOC} -eq 0 ]]; then
-    hwloc-bind ${CPUSET} -- $@
+if [[ ${HPCBIND_LSTOPO} -eq 0 ]]; then
+  if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
+    hwloc-bind ${HPCBIND_HWLOC_CPUSET} -- $@
   else
     eval $@
   fi
 else
-  if [[ ${HAS_HWLOC} -eq 0 ]]; then
-    if [[ ${TEST_BINDINGS_TEXT} == "True" || -z "${DISPLAY}" ]]; then
-      hwloc-ls --restrict ${CPUSET} --only pu
+  if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
+    if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 && ! -z ${DISPLAY} ]]; then
+      echo "[BINDINGS]"
+      hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only pu
+      hwloc-bind ${HPCBIND_HWLOC_CPUSET} -- lstopo --pid 0
     else
-      hwloc-bind ${CPUSET} -- lstopo --pid 0
+      hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET}
     fi
   else
-    echo "Unable to test bindings, hwloc not available."  
+    echo "Unable to show bindings, hwloc not available."
   fi
 fi
