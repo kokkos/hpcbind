@@ -27,7 +27,7 @@ fi
 HPCBIND_HWLOC_PARENT_CPUSET=""
 if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
   MY_PID="$BASHPID"
-  HPCBIND_HWLOC_PARENT_CPUSET=$(hwloc-ps --cpuset | grep "${MY_PID}" | cut -f 2)
+  HPCBIND_HWLOC_PARENT_CPUSET="$(hwloc-ps --cpuset | grep "${MY_PID}" | cut -f 2)"
 fi
 
 ################################################################################
@@ -158,14 +158,15 @@ declare -i HPCBIND_VERBOSE=0
 declare -i HPCBIND_SHOW_BINDINGS=0
 declare -i HPCBIND_LSTOPO=0
 
-for i in $@; do
-  case $i in
+for i in "$@"; do
+  case "$i" in
     # number of partitions to create
     --no-hwloc-bind)
       HPCBIND_ENABLE_HWLOC_BIND=0
       shift
       ;;
     --proc-bind=*)
+      echo "PROC_BIND ${i}"
       HPCBIND_PROC_BIND="${i#*=}"
       shift
       ;;
@@ -309,14 +310,18 @@ declare -i HPCBIND_NUM_PUS=0
 
 if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
   if [[ "${HPCBIND_HWLOC_PARENT_CPUSET}" == "" ]]; then
-    BINDING=$(hwloc-calc ${HPCBIND_PROC_BIND})
+    BINDING=$(hwloc-calc "${HPCBIND_PROC_BIND}")
   else
-    BINDING=$(hwloc-calc --restrict ${HPCBIND_HWLOC_PARENT_CPUSET} ${HPCBIND_PROC_BIND})
+    BINDING=$(hwloc-calc --restrict "${HPCBIND_HWLOC_PARENT_CPUSET}" "${HPCBIND_PROC_BIND}")
   fi
 
-  CPUSETS=($(hwloc-distrib --restrict ${BINDING} --at core ${HPCBIND_DISTRIBUTE}))
-  HPCBIND_HWLOC_CPUSET=${CPUSETS[${HPCBIND_PARTITION}]}
-  HPCBIND_NUM_PUS=$(hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only pu | wc -l)
+  if [[ ${HPCBIND_DISTRIBUTE} -gt 1 ]]; then
+    CPUSETS=($(hwloc-distrib --restrict "${BINDING}" --at core "${HPCBIND_DISTRIBUTE}"))
+    HPCBIND_HWLOC_CPUSET="${CPUSETS[${HPCBIND_PARTITION}]}"
+  else
+    HPCBIND_HWLOC_CPUSET="${BINDING}"
+  fi
+  HPCBIND_NUM_PUS=$(hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu | wc -l)
 else
   HPCBIND_NUM_PUS=$(cat /proc/cpuinfo | grep -c processor)
 fi
@@ -375,11 +380,11 @@ export OMP_NESTED=${HPCBIND_OPENMP_NESTED}
 if [[ ${HPCBIND_ENABLE_GPU_MAPPING} -eq 1 ]]; then
   if [[ ${HPCBIND_QUEUE_GPU_MAPPING} -eq 0 ]]; then
     declare -i GPU_ID=$((HPCBIND_PARTITION % NUM_GPUS))
-    export CUDA_VISIBLE_DEVICES=${HPCBIND_VISIBLE_GPUS[${GPU_ID}]}
+    export CUDA_VISIBLE_DEVICES="${HPCBIND_VISIBLE_GPUS[${GPU_ID}]}"
   else
     declare -i MY_TASK_ID=$((HPCBIND_QUEUE_INDEX * HPCBIND_DISTRIBUTE + HPCBIND_PARTITION))
     declare -i GPU_ID=$((MY_TASK_ID % NUM_GPUS))
-    export CUDA_VISIBLE_DEVICES=${HPCBIND_VISIBLE_GPUS[${GPU_ID}]}
+    export CUDA_VISIBLE_DEVICES="${HPCBIND_VISIBLE_GPUS[${GPU_ID}]}"
   fi
 fi
 
@@ -389,21 +394,21 @@ fi
 export HPCBIND_HAS_HWLOC=${HPCBIND_HAS_HWLOC}
 export HPCBIND_HAS_NVIDIA=${HPCBIND_HAS_NVIDIA}
 export HPCBIND_NUM_PUS=${HPCBIND_NUM_PUS}
-export HPCBIND_HWLOC_CPUSET=${HPCBIND_HWLOC_CPUSET}
+export HPCBIND_HWLOC_CPUSET="${HPCBIND_HWLOC_CPUSET}"
 export HPCBIND_HWLOC_DISTRIBUTE=${HPCBIND_DISTRIBUTE}
 export HPCBIND_HWLOC_DISTRIBUTE_PARTITION=${HPCBIND_PARTITION}
 if [[ "${HPCBIND_HWLOC_PARENT_CPUSET}" == "" ]]; then
   export HPCBIND_HWLOC_PARENT_CPUSET="all"
 else
-  export HPCBIND_HWLOC_PARENT_CPUSET=${HPCBIND_HWLOC_PARENT_CPUSET}
+  export HPCBIND_HWLOC_PARENT_CPUSET="${HPCBIND_HWLOC_PARENT_CPUSET}"
 fi
-export HPCBIND_HWLOC_PROC_BIND=${HPCBIND_PROC_BIND}
+export HPCBIND_HWLOC_PROC_BIND="${HPCBIND_PROC_BIND}"
 export HPCBIND_NVIDIA_ENABLE_GPU_MAPPING=${HPCBIND_ENABLE_GPU_MAPPING}
 export HPCBIND_NVIDIA_VISIBLE_GPUS=$(echo "${HPCBIND_VISIBLE_GPUS[*]}" | tr ' ' ',')
-export HPCBIND_OPENMP_VERSION=${HPCBIND_OPENMP_VERSION}
+export HPCBIND_OPENMP_VERSION="${HPCBIND_OPENMP_VERSION}"
 if [[ "${HPCBIND_QUEUE_NAME}" != "" ]]; then
   export HPCBIND_QUEUE_INDEX=${HPCBIND_QUEUE_INDEX}
-  export HPCBIND_QUEUE_NAME=${HPCBIND_QUEUE_NAME}
+  export HPCBIND_QUEUE_NAME="${HPCBIND_QUEUE_NAME}"
   export HPCBIND_QUEUE_GPU_MAPPING=${HPCBIND_QUEUE_GPU_MAPPING}
 fi
 
@@ -424,7 +429,7 @@ fi
 
 if [[ ${HPCBIND_HAS_HWLOC} -eq 1 && ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
   echo "[BINDINGS]"
-  hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only pu
+  hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu
 elif [[ ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
   echo "Unable to show bindings, hwloc not available."
 fi
@@ -435,7 +440,7 @@ fi
 
 if [[ ${HPCBIND_LSTOPO} -eq 0 ]]; then
   if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
-    hwloc-bind ${HPCBIND_HWLOC_CPUSET} -- $@
+    hwloc-bind "${HPCBIND_HWLOC_CPUSET}" -- $@
   else
     eval $@
   fi
@@ -443,10 +448,10 @@ else
   if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
     if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 && ! -z ${DISPLAY} ]]; then
       echo "[BINDINGS]"
-      hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only pu
-      hwloc-bind ${HPCBIND_HWLOC_CPUSET} -- lstopo --pid 0
+      hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu
+      hwloc-bind "${HPCBIND_HWLOC_CPUSET}" -- lstopo --pid 0
     else
-      hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET}
+      hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}"
     fi
   else
     echo "Unable to show bindings, hwloc not available."
