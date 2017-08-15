@@ -27,7 +27,7 @@ fi
 HPCBIND_HWLOC_PARENT_CPUSET=""
 if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
   MY_PID="$BASHPID"
-  HPCBIND_HWLOC_PARENT_CPUSET="$(hwloc-ps -a --cpuset | grep "${MY_PID}" | cut -f 2)"
+  HPCBIND_HWLOC_PARENT_CPUSET="$(hwloc-ps -a --cpuset | grep ${MY_PID} | cut -f 2)"
 fi
 
 ################################################################################
@@ -322,7 +322,7 @@ if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
   fi
 
   if [[ ${HPCBIND_DISTRIBUTE} -gt 1 ]]; then
-    CPUSETS=($(hwloc-distrib --restrict "${BINDING}" --at core "${HPCBIND_DISTRIBUTE}"))
+    CPUSETS=($(hwloc-distrib --restrict ${BINDING} --at core ${HPCBIND_DISTRIBUTE}))
     HPCBIND_HWLOC_CPUSET="${CPUSETS[${HPCBIND_PARTITION}]}"
   else
     HPCBIND_HWLOC_CPUSET="${BINDING}"
