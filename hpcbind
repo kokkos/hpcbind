@@ -27,7 +27,7 @@ fi
 HPCBIND_HWLOC_PARENT_CPUSET=""
 if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
   MY_PID="$BASHPID"
-  HPCBIND_HWLOC_PARENT_CPUSET="$(hwloc-ps --cpuset | grep "${MY_PID}" | cut -f 2)"
+  HPCBIND_HWLOC_PARENT_CPUSET="$(hwloc-ps -a --cpuset | grep "${MY_PID}" | cut -f 2)"
 fi
 
 ################################################################################
@@ -91,6 +91,7 @@ function show_help {
   echo "  --proc-bind=<LOC>     Set the initial process mask for the script"
   echo "                        LOC can be any valid location argument for"
   echo "                        hwloc-calc  Default: all"
+  echo "  --whole-system        ${cmd} will ignore the its parent process binding"
   echo "  --distribute=N        Distribute the current cpuset into N partitions"
   echo "  --distribute-partition=I"
   echo "                        Use the i'th partition (zero based)"
@@ -120,6 +121,8 @@ function show_help {
   echo "    ${cmd} --distribute=4 --distribute-partition=2 -v -- command ..."
   echo "  Bing the process to all even cores"
   echo "    ${cmd} --proc-bind=core:even -v -- command ..."
+  echo "  Bing the the even cores of socket 0 and the odd cores of socket 1"
+  echo "    ${cmd} --proc-bind='socket:0.core:even socket:1.core:odd' -v -- command ..."
   echo "  Bind to the first 64 cores and split the current process cpuset into 4"
   echo "    ${cmd} --proc-bind=core:0-63 --distribute=4 --distribute-partition=0 -- command ..."
   echo "  skip GPU 0 when mapping visible devices"
@@ -166,8 +169,11 @@ for i in "$@"; do
       shift
       ;;
     --proc-bind=*)
-      echo "PROC_BIND ${i}"
       HPCBIND_PROC_BIND="${i#*=}"
+      shift
+      ;;
+    --whole-system)
+      HPCBIND_HWLOC_PARENT_CPUSET=""
       shift
       ;;
     --distribute=*)
@@ -226,7 +232,7 @@ for i in "$@"; do
       ;;
     --lstopo)
       HPCBIND_VERBOSE=1
-      HPCBIND_SHOW_BINDINGS=0
+      HPCBIND_SHOW_BINDINGS=1
       HPCBIND_LSTOPO=1
       shift
       ;;
@@ -310,9 +316,9 @@ declare -i HPCBIND_NUM_PUS=0
 
 if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
   if [[ "${HPCBIND_HWLOC_PARENT_CPUSET}" == "" ]]; then
-    BINDING=$(hwloc-calc "${HPCBIND_PROC_BIND}")
+    BINDING=$(hwloc-calc ${HPCBIND_PROC_BIND[*]})
   else
-    BINDING=$(hwloc-calc --restrict "${HPCBIND_HWLOC_PARENT_CPUSET}" "${HPCBIND_PROC_BIND}")
+    BINDING=$(hwloc-calc --restrict ${HPCBIND_HWLOC_PARENT_CPUSET} ${HPCBIND_PROC_BIND[*]})
   fi
 
   if [[ ${HPCBIND_DISTRIBUTE} -gt 1 ]]; then
@@ -321,7 +327,7 @@ if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
   else
     HPCBIND_HWLOC_CPUSET="${BINDING}"
   fi
-  HPCBIND_NUM_PUS=$(hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu | wc -l)
+  HPCBIND_NUM_PUS=$(hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only pu | wc -l)
 else
   HPCBIND_NUM_PUS=$(cat /proc/cpuinfo | grep -c processor)
 fi
@@ -438,22 +444,13 @@ fi
 # Run command
 ################################################################################
 
+# must be the last executed command so that the return value is correct
 if [[ ${HPCBIND_LSTOPO} -eq 0 ]]; then
   if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
     hwloc-bind "${HPCBIND_HWLOC_CPUSET}" -- $@
   else
     eval $@
   fi
-else
-  if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
-    if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 && ! -z ${DISPLAY} ]]; then
-      echo "[BINDINGS]"
-      hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu
-      hwloc-bind "${HPCBIND_HWLOC_CPUSET}" -- lstopo --pid 0
-    else
-      hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}"
-    fi
-  else
-    echo "Unable to show bindings, hwloc not available."
-  fi
+elif [[ ${HPCBIND_HAS_HWLOC} -eq 1 && ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 && ! -z ${DISPLAY} ]]; then
+  hwloc-bind "${HPCBIND_HWLOC_CPUSET}" -- lstopo --pid 0
 fi
