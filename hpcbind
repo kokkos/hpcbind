@@ -124,7 +124,7 @@ function show_help {
   echo "                        Override logic for selecting OMP_PROC_BIND"
   echo "  --no-openmp-nested    Set OMP_NESTED to false"
   echo "  --show-bindings       Print the bindings to stdout"
-  echo "  --show-bindings=<Prefix>"
+  echo "  --save-bindings=<Prefix>"
   echo "                        Output the bindings to the file 'Prefix.rank.out'"
   echo "  --lstopo              Show bindings in lstopo without executing a command"
   echo "  -v|--verbose          Show options and relevant environment variables"
@@ -246,7 +246,7 @@ for i in "$@"; do
       HPCBIND_SHOW_BINDINGS=1
       shift
       ;;
-    --show-bindings=*)
+    --save-bindings=*)
       HPCBIND_SHOW_BINDINGS=1
       HPCBIND_OUTPUT_PREFIX="${i#*=}"
       shift
