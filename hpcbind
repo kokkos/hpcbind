@@ -123,9 +123,12 @@ function show_help {
   echo "  --force-openmp-proc-bind=<OP>"
   echo "                        Override logic for selecting OMP_PROC_BIND"
   echo "  --no-openmp-nested    Set OMP_NESTED to false"
-  echo "  --show-bindings       Show the bindings"
+  echo "  --show-bindings       Print the bindings to stdout"
+  echo "  --show-bindings=<Prefix>"
+  echo "                        Output the bindings to the file 'Prefix.rank.out'"
   echo "  --lstopo              Show bindings in lstopo without executing a command"
   echo "  -v|--verbose          Show options and relevant environment variables"
+  echo "  --verbose=<Prefix>    Print options and environment variables to file"
   echo "  -h|--help             Show this message"
   echo ""
   echo "Sample Usage:"
@@ -172,6 +175,8 @@ declare -i HPCBIND_VERBOSE=0
 
 declare -i HPCBIND_SHOW_BINDINGS=0
 declare -i HPCBIND_LSTOPO=0
+
+HPCBIND_OUTPUT_PREFIX=""
 
 for i in "$@"; do
   case "$i" in
@@ -238,8 +243,12 @@ for i in "$@"; do
       shift
       ;;
     --show-bindings)
-      HPCBIND_VERBOSE=1
       HPCBIND_SHOW_BINDINGS=1
+      shift
+      ;;
+    --show-bindings=*)
+      HPCBIND_SHOW_BINDINGS=1
+      HPCBIND_OUTPUT_PREFIX="${i#*=}"
       shift
       ;;
     --lstopo)
@@ -250,6 +259,11 @@ for i in "$@"; do
       ;;
     -v|--verbose)
       HPCBIND_VERBOSE=1
+      shift
+      ;;
+    --verbose=*)
+      HPCBIND_VERBOSE=1
+      HPCBIND_OUTPUT_PREFIX="${i#*=}"
       shift
       ;;
     -h|--help)
@@ -443,21 +457,42 @@ fi
 # Print verbose
 ################################################################################
 
-if [[ ${HPCBIND_VERBOSE} -eq 1 ]]; then
-  MY_ENV=$(env | sort)
-  echo "[HPCBIND]"
-  echo "${MY_ENV}" | grep -E "^HPCBIND_"
-  echo "[CUDA]"
-  echo "${MY_ENV}" | grep -E "^CUDA_"
-  echo "[OPENMP]"
-  echo "${MY_ENV}" | grep -E "^OMP_"
-fi
+if [[ "${HPCBIND_OUTPUT_PREFIX}" == "" ]]; then
+  if [[ ${HPCBIND_VERBOSE} -eq 1 ]]; then
+    MY_ENV=$(env | sort)
+    echo "[HPCBIND]"
+    echo "${MY_ENV}" | grep -E "^HPCBIND_"
+    echo "[CUDA]"
+    echo "${MY_ENV}" | grep -E "^CUDA_"
+    echo "[OPENMP]"
+    echo "${MY_ENV}" | grep -E "^OMP_"
+  fi
 
-if [[ ${HPCBIND_HAS_HWLOC} -eq 1 && ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
-  echo "[BINDINGS]"
-  hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu
-elif [[ ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
-  echo "Unable to show bindings, hwloc not available."
+  if [[ ${HPCBIND_HAS_HWLOC} -eq 1 && ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
+    echo "[BINDINGS]"
+    hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu
+  elif [[ ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
+    echo "Unable to show bindings, hwloc not available."
+  fi
+else
+  FILENAME="${HPCBIND_OUTPUT_PREFIX}.${HPCBIND_QUEUE_INDEX}.out"
+  echo "" > ${FILENAME}
+  if [[ ${HPCBIND_VERBOSE} -eq 1 ]]; then
+    MY_ENV=$(env | sort)
+    echo "[HPCBIND]" >> ${FILENAME}
+    echo "${MY_ENV}" | grep -E "^HPCBIND_" >> ${FILENAME}
+    echo "[CUDA]" >> ${FILENAME}
+    echo "${MY_ENV}" | grep -E "^CUDA_" >> ${FILENAME}
+    echo "[OPENMP]" >> ${FILENAME}
+    echo "${MY_ENV}" | grep -E "^OMP_" >> ${FILENAME}
+  fi
+
+  if [[ ${HPCBIND_HAS_HWLOC} -eq 1 && ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
+    echo "[BINDINGS]" >> ${FILENAME}
+    hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu >> ${FILENAME}
+  elif [[ ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
+    echo "Unable to show bindings, hwloc not available." >> ${FILENAME}
+  fi
 fi
 
 ################################################################################
