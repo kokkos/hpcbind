@@ -86,7 +86,6 @@ elif [[ ! -z "${ALPS_APP_PE}" ]]; then
   HPCBIND_QUEUE_INDEX=${ALPS_APP_PE}
 fi
 
-
 ################################################################################
 # Show help
 ################################################################################
@@ -123,12 +122,13 @@ function show_help {
   echo "  --force-openmp-proc-bind=<OP>"
   echo "                        Override logic for selecting OMP_PROC_BIND"
   echo "  --no-openmp-nested    Set OMP_NESTED to false"
-  echo "  --show-bindings       Print the bindings to stdout"
-  echo "  --save-bindings=<Prefix>"
-  echo "                        Output the bindings to the file 'Prefix.rank.out'"
-  echo "  --lstopo              Show bindings in lstopo without executing a command"
-  echo "  -v|--verbose          Show options and relevant environment variables"
-  echo "  --verbose=<Prefix>    Print options and environment variables to file"
+  echo "  --output-prefix=<P>   Save the output to files of the form"
+  echo "                        P-N.log, P-N.out and P-N.err where P is the prefix"
+  echo "                        and N is the queue index or mpi rank (no spaces)"
+  echo "  --output-mode=<Op>    How output should be handled."
+  echo "                        Options are all, rank0, and none.  Default: rank0" 
+  echo "  --lstopo              Show bindings in lstopo"
+  echo "  -v|--verbose          Print bindings and relevant environment variables"
   echo "  -h|--help             Show this message"
   echo ""
   echo "Sample Usage:"
@@ -143,7 +143,7 @@ function show_help {
   echo "  skip GPU 0 when mapping visible devices"
   echo "    ${cmd} --distribute=4 --distribute-partition=0 --visible-gpus=1,2 -v -- command ..."
   echo "  Display the current bindings"
-  echo "    ${cmd} --proc-bind=numa:0 --show-bindings -- command"
+  echo "    ${cmd} --proc-bind=numa:0 -- command"
   echo "  Display the current bindings using lstopo"
   echo "    ${cmd} --proc-bind=numa:0.core:odd --lstopo"
   echo ""
@@ -173,10 +173,12 @@ HPCBIND_OPENMP_FORCE_PROC_BIND=""
 HPCBIND_OPENMP_NESTED=${OMP_NESTED:-true}
 declare -i HPCBIND_VERBOSE=0
 
-declare -i HPCBIND_SHOW_BINDINGS=0
 declare -i HPCBIND_LSTOPO=0
 
 HPCBIND_OUTPUT_PREFIX=""
+HPCBIND_OUTPUT_MODE="rank0"
+
+declare -i HPCBIND_HAS_COMMAND=0
 
 for i in "$@"; do
   case "$i" in
@@ -242,28 +244,23 @@ for i in "$@"; do
       HPCBIND_OPENMP_NESTED="false"
       shift
       ;;
-    --show-bindings)
-      HPCBIND_SHOW_BINDINGS=1
+    --output-prefix=*)
+      HPCBIND_OUTPUT_PREFIX="${i#*=}"
       shift
       ;;
-    --save-bindings=*)
-      HPCBIND_SHOW_BINDINGS=1
-      HPCBIND_OUTPUT_PREFIX="${i#*=}"
+    --output-mode=*)
+      HPCBIND_OUTPUT_MODE="${i#*=}"
+      #convert to lower case
+      HPCBIND_OUTPUT_MODE="${HPCBIND_OUTPUT_MODE,,}"
       shift
       ;;
     --lstopo)
       HPCBIND_VERBOSE=1
-      HPCBIND_SHOW_BINDINGS=1
       HPCBIND_LSTOPO=1
       shift
       ;;
     -v|--verbose)
       HPCBIND_VERBOSE=1
-      shift
-      ;;
-    --verbose=*)
-      HPCBIND_VERBOSE=1
-      HPCBIND_OUTPUT_PREFIX="${i#*=}"
       shift
       ;;
     -h|--help)
@@ -272,6 +269,7 @@ for i in "$@"; do
       ;;
     # ignore remaining arguments
     --)
+      HPCBIND_HAS_COMMAND=1
       shift
       break
       ;;
@@ -283,15 +281,40 @@ for i in "$@"; do
   esac
 done
 
+################################################################################
+# Check output mode
+################################################################################
+declare -i HPCBIND_TEE=0
+
+if [[ "${HPCBIND_OUTPUT_MODE}" == "none" ]]; then
+  HPCBIND_TEE=0
+elif [[ "${HPCBIND_OUTPUT_MODE}" == "all" ]]; then
+  HPCBIND_TEE=1
+elif [[ ${HPCBIND_QUEUE_INDEX} -eq 0 ]]; then
+  #default to rank0 printing to screen
+  HPCBIND_TEE=1
+fi
+
+
+if [[ "${HPCBIND_OUTPUT_PREFIX}" == "" ]]; then
+  HPCBIND_LOG=/dev/null
+  HPCBIND_ERR=/dev/null
+  HPCBIND_OUT=/dev/null
+else
+  HPCBIND_LOG="${HPCBIND_OUTPUT_PREFIX}-${HPCBIND_QUEUE_INDEX}.hpc.log"
+  HPCBIND_ERR="${HPCBIND_OUTPUT_PREFIX}-${HPCBIND_QUEUE_INDEX}.err"
+  HPCBIND_OUT="${HPCBIND_OUTPUT_PREFIX}-${HPCBIND_QUEUE_INDEX}.out"
+  > ${HPCBIND_LOG}
+fi
+
 
 ################################################################################
 # Check unknown arguments
 ################################################################################
 if [[ ${#UNKNOWN_ARGS[*]} > 0 ]]; then
-  echo "Uknown options: ${UNKNOWN_ARGS[*]}"
+  echo "HPCBIND Uknown options: ${UNKNOWN_ARGS[*]}" > >(tee -a ${HPCBIND_LOG})
   exit 1
 fi
-
 
 ################################################################################
 # Check that visible gpus are valid
@@ -301,22 +324,19 @@ if [[ ${HPCBIND_ENABLE_GPU_MAPPING} -eq 1 ]]; then
   for ((i=0; i < ${#HPCBIND_VISIBLE_GPUS[*]}; i++)); do
     if [[ ${HPCBIND_VISIBLE_GPUS[$i]} -ge ${NUM_GPUS} ||
       ${HPCBIND_VISIBLE_GPUS[$i]} -lt 0 ]]; then
-      echo "Invaild GPU ID ${HPCBIND_VISIBLE_GPUS[$i]}, setting to 0"
+      echo "HPCBIND Invaild GPU ID ${HPCBIND_VISIBLE_GPUS[$i]} (setting to 0)" > >(tee -a ${HPCBIND_LOG})
       HPCBIND_VISIBLE_GPUS[$i]=0;
     fi
   done
   NUM_GPUS=${#HPCBIND_VISIBLE_GPUS[@]}
 fi
 
-
 ################################################################################
 # Check OpenMP percent
 ################################################################################
 if [[ ${HPCBIND_OPENMP_PERCENT} -lt 1 ]]; then
-  echo "OpenMP percent < 1, setting to 1"
   HPCBIND_OPENMP_PERCENT=1
 elif [[ ${HPCBIND_OPENMP_PERCENT} -gt 100 ]]; then
-  echo "OpenMP percent > 100, setting to 100"
   HPCBIND_OPENMP_PERCENT=100
 fi
 
@@ -324,11 +344,12 @@ fi
 # Check distribute
 ################################################################################
 if [[ ${HPCBIND_DISTRIBUTE} -le 0 ]]; then
-  echo "Invalid input for distribute, changing distribute to 1"
   HPCBIND_DISTRIBUTE=1
 fi
 
+################################################################################
 #choose the correct partition
+################################################################################
 if [[ ${HPCBIND_PARTITION} -lt 0 && ${HPCBIND_QUEUE_MAPPING} -eq 1 ]]; then
   HPCBIND_PARTITION=${HPCBIND_QUEUE_INDEX}
 elif [[ ${HPCBIND_PARTITION} -lt 0 ]]; then
@@ -338,9 +359,6 @@ fi
 if [[ ${HPCBIND_PARTITION} -ge ${HPCBIND_DISTRIBUTE} ]]; then
   HPCBIND_PARTITION=$((HPCBIND_PARTITION % HPCBIND_DISTRIBUTE))
 fi
-
-
-
 
 ################################################################################
 # Find cpuset and num threads
@@ -457,41 +475,38 @@ fi
 # Print verbose
 ################################################################################
 
-if [[ "${HPCBIND_OUTPUT_PREFIX}" == "" ]]; then
-  if [[ ${HPCBIND_VERBOSE} -eq 1 ]]; then
-    MY_ENV=$(env | sort)
-    echo "[HPCBIND]"
-    echo "${MY_ENV}" | grep -E "^HPCBIND_"
-    echo "[CUDA]"
-    echo "${MY_ENV}" | grep -E "^CUDA_"
-    echo "[OPENMP]"
-    echo "${MY_ENV}" | grep -E "^OMP_"
-  fi
+TMP_ENV=$(env | sort)
+if [[ ${HPCBIND_TEE} -eq 0 || ${HPCBIND_VERBOSE} -eq 0 ]]; then
+  echo "[HOST]" >> ${HPCBIND_LOG}
+  hostname -s >> ${HPCBIND_LOG}
+  echo "[HPCBIND]" >> ${HPCBIND_LOG}
+  echo "${TMP_ENV}" | grep -E "^HPCBIND_" >> ${HPCBIND_LOG}
+  echo "[CUDA]" >> ${HPCBIND_LOG}
+  echo "${TMP_ENV}" | grep -E "^CUDA_" >> ${HPCBIND_LOG}
+  echo "[OPENMP]" >> ${HPCBIND_LOG}
+  echo "${TMP_ENV}" | grep -E "^OMP_" >> ${HPCBIND_LOG}
 
-  if [[ ${HPCBIND_HAS_HWLOC} -eq 1 && ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
-    echo "[BINDINGS]"
-    hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu
-  elif [[ ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
-    echo "Unable to show bindings, hwloc not available."
+  if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
+    echo "[BINDINGS]" >> ${HPCBIND_LOG}
+    hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu >> ${HPCBIND_LOG}
+  else
+    echo "Unable to show bindings, hwloc not available." >> ${HPCBIND_LOG}
   fi
 else
-  FILENAME="${HPCBIND_OUTPUT_PREFIX}.${HPCBIND_QUEUE_INDEX}.out"
-  echo "" > ${FILENAME}
-  if [[ ${HPCBIND_VERBOSE} -eq 1 ]]; then
-    MY_ENV=$(env | sort)
-    echo "[HPCBIND]" >> ${FILENAME}
-    echo "${MY_ENV}" | grep -E "^HPCBIND_" >> ${FILENAME}
-    echo "[CUDA]" >> ${FILENAME}
-    echo "${MY_ENV}" | grep -E "^CUDA_" >> ${FILENAME}
-    echo "[OPENMP]" >> ${FILENAME}
-    echo "${MY_ENV}" | grep -E "^OMP_" >> ${FILENAME}
-  fi
+  echo "[HOST]" > >(tee -a ${HPCBIND_LOG})
+  hostname -s > >(tee -a ${HPCBIND_LOG})
+  echo "[HPCBIND]" > >(tee -a ${HPCBIND_LOG})
+  echo "${TMP_ENV}" | grep -E "^HPCBIND_" > >(tee -a ${HPCBIND_LOG})
+  echo "[CUDA]" > >(tee -a ${HPCBIND_LOG})
+  echo "${TMP_ENV}" | grep -E "^CUDA_" > >(tee -a ${HPCBIND_LOG})
+  echo "[OPENMP]" > >(tee -a ${HPCBIND_LOG})
+  echo "${TMP_ENV}" | grep -E "^OMP_" > >(tee -a ${HPCBIND_LOG})
 
-  if [[ ${HPCBIND_HAS_HWLOC} -eq 1 && ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
-    echo "[BINDINGS]" >> ${FILENAME}
-    hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu >> ${FILENAME}
-  elif [[ ${HPCBIND_SHOW_BINDINGS} -eq 1 ]]; then
-    echo "Unable to show bindings, hwloc not available." >> ${FILENAME}
+  if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
+    echo "[BINDINGS]" > >(tee -a ${HPCBIND_LOG})
+    hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu > >(tee -a ${HPCBIND_LOG})
+  else
+    echo "Unable to show bindings, hwloc not available." > >(tee -a ${HPCBIND_LOG})
   fi
 fi
 
@@ -500,12 +515,23 @@ fi
 ################################################################################
 
 # must be the last executed command so that the return value is correct
-if [[ ${HPCBIND_LSTOPO} -eq 0 ]]; then
-  if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
-    hwloc-bind "${HPCBIND_HWLOC_CPUSET}" -- $@
-  else
-    eval $@
-  fi
-elif [[ ${HPCBIND_HAS_HWLOC} -eq 1 && ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 && ! -z ${DISPLAY} ]]; then
+if [[ ${HPCBIND_LSTOPO} -eq 1 && ${HPCBIND_HAS_HWLOC} -eq 1 && ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 && ! -z ${DISPLAY} ]]; then
   hwloc-bind "${HPCBIND_HWLOC_CPUSET}" -- lstopo --pid 0
+elif [[ ${HPCBIND_HAS_COMMAND} -eq 1 ]]; then
+  # clear output files
+  > ${HPCBIND_ERR}
+  > ${HPCBIND_OUT}
+  if [[ ${HPCBIND_TEE} -eq 0 ]]; then
+    if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
+      hwloc-bind "${HPCBIND_HWLOC_CPUSET}" -- $@ > ${HPCBIND_OUT} 2> ${HPCBIND_ERR}
+    else
+      eval $@ > ${HPCBIND_OUT} 2> ${HPCBIND_ERR}
+    fi
+  else
+    if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
+      hwloc-bind "${HPCBIND_HWLOC_CPUSET}" -- $@ > >(tee ${HPCBIND_OUT}) 2> >(tee ${HPCBIND_ERR} >&2)
+    else
+      eval $@ > >(tee ${HPCBIND_OUT}) 2> >(tee ${HPCBIND_ERR} >&2)
+    fi
+  fi
 fi
