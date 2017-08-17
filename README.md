@@ -34,24 +34,30 @@ Options:
   --force-openmp-proc-bind=<OP>
                         Override logic for selecting OMP_PROC_BIND
   --no-openmp-nested    Set OMP_NESTED to false
-  --show-bindings       Show the bindings
-  --lstopo              Show bindings in lstopo without executing a command
-  -v|--verbose          Show options and relevant environment variables
+  --output-prefix=<P>   Save the output to files of the form
+                        P-N.log, P-N.out and P-N.err where P is the prefix
+                        and N is the queue index or mpi rank (no spaces)
+  --output-mode=<Op>    How console output should be handled.
+                        Options are all, rank0, and none.  Default: rank0
+  --lstopo              Show bindings in lstopo
+  -v|--verbose          Print bindings and relevant environment variables
   -h|--help             Show this message
 
 Sample Usage:
   Split the current process cpuset into 4 and use the 3rd partition
     hpcbind --distribute=4 --distribute-partition=2 -v -- command ...
-  Bing the process to all even cores
+  Launch 16 jobs over 4 nodes with 4 jobs per node using only the even pus
+  and save the output to rank specific files
+    mpiexec -N 16 -npernode 4 hpcbind --whole-system --proc-bind=pu:even \
+      --distribute=4 -v --output-prefix=output  -- command ...
+  Bind the process to all even cores
     hpcbind --proc-bind=core:even -v -- command ...
-  Bing the the even cores of socket 0 and the odd cores of socket 1
+  Bind the the even cores of socket 0 and the odd cores of socket 1
     hpcbind --proc-bind='socket:0.core:even socket:1.core:odd' -v -- command ...
-  Bind to the first 64 cores and split the current process cpuset into 4
-    hpcbind --proc-bind=core:0-63 --distribute=4 --distribute-partition=0 -- command ...
-  skip GPU 0 when mapping visible devices
+  Skip GPU 0 when mapping visible devices
     hpcbind --distribute=4 --distribute-partition=0 --visible-gpus=1,2 -v -- command ...
   Display the current bindings
-    hpcbind --proc-bind=numa:0 --show-bindings -- command
+    hpcbind --proc-bind=numa:0 -- command
   Display the current bindings using lstopo
     hpcbind --proc-bind=numa:0.core:odd --lstopo
 ```
