@@ -45,8 +45,11 @@ declare -i NUM_GPUS=0
 HPCBIND_VISIBLE_GPUS=""
 if [[ ${HPCBIND_HAS_NVIDIA} -eq 1 ]]; then
   NUM_GPUS=$(nvidia-smi -L | wc -l);
-  GPU_LIST="$( seq 0 $((NUM_GPUS-1)) )"
-  HPCBIND_VISIBLE_GPUS=${CUDA_VISIBLE_DEVICES:-${GPU_LIST}}
+  HPCBIND_HAS_NVIDIA=$((!$?))
+  if [[ ${HPCBIND_HAS_NVIDIA} -eq 1 ]]; then
+    GPU_LIST="$( seq 0 $((NUM_GPUS-1)) )"
+    HPCBIND_VISIBLE_GPUS=${CUDA_VISIBLE_DEVICES:-${GPU_LIST}}
+  fi
 fi
 
 declare -i HPCBIND_ENABLE_GPU_MAPPING=$((NUM_GPUS > 0))
@@ -57,33 +60,38 @@ declare -i HPCBIND_ENABLE_GPU_MAPPING=$((NUM_GPUS > 0))
 # supports sbatch, bsub, aprun
 ################################################################################
 HPCBIND_QUEUE_NAME=""
-declare -i HPCBIND_QUEUE_INDEX=0
+declare -i HPCBIND_QUEUE_RANK=0
+declare -i HPCBIND_QUEUE_SIZE=0
 declare -i HPCBIND_QUEUE_MAPPING=0
 
 if [[ ! -z "${PMI_RANK}" ]]; then
   HPCBIND_QUEUE_MAPPING=1
   HPCBIND_QUEUE_NAME="mpich"
-  HPCBIND_QUEUE_INDEX=${PMI_RANK}
+  HPCBIND_QUEUE_RANK=${PMI_RANK}
+  HPCBIND_QUEUE_SIZE=${PMI_SIZE}
 elif [[ ! -z "${OMPI_COMM_WORLD_RANK}" ]]; then
   HPCBIND_QUEUE_MAPPING=1
   HPCBIND_QUEUE_NAME="openmpi"
-  HPCBIND_QUEUE_INDEX=${OMPI_COMM_WORLD_RANK}
+  HPCBIND_QUEUE_RANK=${OMPI_COMM_WORLD_RANK}
+  HPCBIND_QUEUE_SIZE=${OMPI_COMM_WORLD_SIZE}
 elif [[ ! -z "${MV2_COMM_WORLD_RANK}" ]]; then
   HPCBIND_QUEUE_MAPPING=1
   HPCBIND_QUEUE_NAME="mvapich2"
-  HPCBIND_QUEUE_INDEX=${MV2_COMM_WORLD_RANK}
+  HPCBIND_QUEUE_RANK=${MV2_COMM_WORLD_RANK}
+  HPCBIND_QUEUE_SIZE=${MV2_COMM_WORLD_SIZE}
 elif [[ ! -z "${SLURM_LOCAL_ID}" ]]; then
   HPCBIND_QUEUE_MAPPING=1
   HPCBIND_QUEUE_NAME="slurm"
-  HPCBIND_QUEUE_INDEX=${SLURM_LOCAL_ID}
-elif [[ ! -z "${LBS_JOBINDEX}" ]]; then
-  HPCBIND_QUEUE_MAPPING=1
-  HPCBIND_QUEUE_NAME="bsub"
-  HPCBIND_QUEUE_INDEX=${LBS_JOBINDEX}
+  HPCBIND_QUEUE_RANK=${SLURM_PROCID}
+  HPCBIND_QUEUE_SIZE=${SLURM_NPROCS}
 elif [[ ! -z "${ALPS_APP_PE}" ]]; then
   HPCBIND_QUEUE_MAPPING=1
   HPCBIND_QUEUE_NAME="aprun"
-  HPCBIND_QUEUE_INDEX=${ALPS_APP_PE}
+  HPCBIND_QUEUE_RANK=${ALPS_APP_PE}
+elif [[ ! -z "${LBS_JOBINDEX}" ]]; then
+  HPCBIND_QUEUE_MAPPING=1
+  HPCBIND_QUEUE_NAME="bsub"
+  HPCBIND_QUEUE_RANK=${LBS_JOBINDEX}
 fi
 
 ################################################################################
@@ -123,8 +131,8 @@ function show_help {
   echo "                        Override logic for selecting OMP_PROC_BIND"
   echo "  --no-openmp-nested    Set OMP_NESTED to false"
   echo "  --output-prefix=<P>   Save the output to files of the form"
-  echo "                        P-N.log, P-N.out and P-N.err where P is the prefix"
-  echo "                        and N is the queue index or mpi rank (no spaces)"
+  echo "                        P.hpcbind.N, P.stdout.N and P.stderr.N where P is "
+  echo "                        the prefix and N is the rank (no spaces)"
   echo "  --output-mode=<Op>    How console output should be handled."
   echo "                        Options are all, rank0, and none.  Default: rank0" 
   echo "  --lstopo              Show bindings in lstopo"
@@ -292,7 +300,7 @@ if [[ "${HPCBIND_OUTPUT_MODE}" == "none" ]]; then
   HPCBIND_TEE=0
 elif [[ "${HPCBIND_OUTPUT_MODE}" == "all" ]]; then
   HPCBIND_TEE=1
-elif [[ ${HPCBIND_QUEUE_INDEX} -eq 0 ]]; then
+elif [[ ${HPCBIND_QUEUE_RANK} -eq 0 ]]; then
   #default to rank0 printing to screen
   HPCBIND_TEE=1
 fi
@@ -303,10 +311,19 @@ if [[ "${HPCBIND_OUTPUT_PREFIX}" == "" ]]; then
   HPCBIND_ERR=/dev/null
   HPCBIND_OUT=/dev/null
 else
-  HPCBIND_LOG="${HPCBIND_OUTPUT_PREFIX}.hpcbind.${HPCBIND_QUEUE_INDEX}"
-  HPCBIND_ERR="${HPCBIND_OUTPUT_PREFIX}.stderr.${HPCBIND_QUEUE_INDEX}"
-  HPCBIND_OUT="${HPCBIND_OUTPUT_PREFIX}.stdout.${HPCBIND_QUEUE_INDEX}"
-  > ${HPCBIND_LOG}
+  if [[ ${HPCBIND_QUEUE_SIZE} -gt 0 ]]; then
+    HPCBIND_STR_QUEUE_SIZE="${HPCBIND_QUEUE_SIZE}"
+    HPCBIND_STR_QUEUE_RANK=$(printf %0*d ${#HPCBIND_STR_QUEUE_SIZE} ${HPCBIND_QUEUE_RANK})
+
+    HPCBIND_LOG="${HPCBIND_OUTPUT_PREFIX}.hpcbind.${HPCBIND_STR_QUEUE_RANK}"
+    HPCBIND_ERR="${HPCBIND_OUTPUT_PREFIX}.stderr.${HPCBIND_STR_QUEUE_RANK}"
+    HPCBIND_OUT="${HPCBIND_OUTPUT_PREFIX}.stdout.${HPCBIND_STR_QUEUE_RANK}"
+  else
+    HPCBIND_LOG="${HPCBIND_OUTPUT_PREFIX}.hpcbind.${HPCBIND_QUEUE_RANK}"
+    HPCBIND_ERR="${HPCBIND_OUTPUT_PREFIX}.stderr.${HPCBIND_QUEUE_RANK}"
+    HPCBIND_OUT="${HPCBIND_OUTPUT_PREFIX}.stdout.${HPCBIND_QUEUE_RANK}"
+    > ${HPCBIND_LOG}
+  fi
 fi
 
 
@@ -353,7 +370,7 @@ fi
 #choose the correct partition
 ################################################################################
 if [[ ${HPCBIND_PARTITION} -lt 0 && ${HPCBIND_QUEUE_MAPPING} -eq 1 ]]; then
-  HPCBIND_PARTITION=${HPCBIND_QUEUE_INDEX}
+  HPCBIND_PARTITION=${HPCBIND_QUEUE_RANK}
 elif [[ ${HPCBIND_PARTITION} -lt 0 ]]; then
   HPCBIND_PARTITION=0
 fi
@@ -382,8 +399,14 @@ if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
     HPCBIND_HWLOC_CPUSET="${BINDING}"
   fi
   HPCBIND_NUM_PUS=$(hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only pu | wc -l)
+  HPCBIND_NUM_CORES=$(hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only core | wc -l)
+  HPCBIND_NUM_NUMAS=$(hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only numa | wc -l)
+  HPCBIND_NUM_SOCKETS=$(hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only socket | wc -l)
 else
   HPCBIND_NUM_PUS=$(cat /proc/cpuinfo | grep -c processor)
+  HPCBIND_NUM_CORES=${HPCBIND_NUM_PUS}
+  HPCBIND_NUM_NUMAS=1
+  HPCBIND_NUM_SOCKETS=1
 fi
 
 declare -i HPCBIND_OPENMP_NUM_THREADS=$((HPCBIND_NUM_PUS * HPCBIND_OPENMP_PERCENT))
@@ -442,7 +465,7 @@ if [[ ${HPCBIND_ENABLE_GPU_MAPPING} -eq 1 ]]; then
     declare -i GPU_ID=$((HPCBIND_PARTITION % NUM_GPUS))
     export CUDA_VISIBLE_DEVICES="${HPCBIND_VISIBLE_GPUS[${GPU_ID}]}"
   else
-    declare -i MY_TASK_ID=$((HPCBIND_QUEUE_INDEX * HPCBIND_DISTRIBUTE + HPCBIND_PARTITION))
+    declare -i MY_TASK_ID=$((HPCBIND_QUEUE_RANK * HPCBIND_DISTRIBUTE + HPCBIND_PARTITION))
     declare -i GPU_ID=$((MY_TASK_ID % NUM_GPUS))
     export CUDA_VISIBLE_DEVICES="${HPCBIND_VISIBLE_GPUS[${GPU_ID}]}"
   fi
@@ -454,6 +477,9 @@ fi
 export HPCBIND_HAS_HWLOC=${HPCBIND_HAS_HWLOC}
 export HPCBIND_HAS_NVIDIA=${HPCBIND_HAS_NVIDIA}
 export HPCBIND_NUM_PUS=${HPCBIND_NUM_PUS}
+export HPCBIND_NUM_CORES=${HPCBIND_NUM_CORES}
+export HPCBIND_NUM_NUMAS=${HPCBIND_NUM_NUMAS}
+export HPCBIND_NUM_SOCKET=${HPCBIND_NUM_SOCKET}
 export HPCBIND_HWLOC_CPUSET="${HPCBIND_HWLOC_CPUSET}"
 export HPCBIND_HWLOC_DISTRIBUTE=${HPCBIND_DISTRIBUTE}
 export HPCBIND_HWLOC_DISTRIBUTE_PARTITION=${HPCBIND_PARTITION}
@@ -467,7 +493,8 @@ export HPCBIND_NVIDIA_ENABLE_GPU_MAPPING=${HPCBIND_ENABLE_GPU_MAPPING}
 export HPCBIND_NVIDIA_VISIBLE_GPUS=$(echo "${HPCBIND_VISIBLE_GPUS[*]}" | tr ' ' ',')
 export HPCBIND_OPENMP_VERSION="${HPCBIND_OPENMP_VERSION}"
 if [[ "${HPCBIND_QUEUE_NAME}" != "" ]]; then
-  export HPCBIND_QUEUE_INDEX=${HPCBIND_QUEUE_INDEX}
+  export HPCBIND_QUEUE_RANK=${HPCBIND_QUEUE_RANK}
+  export HPCBIND_QUEUE_SIZE=${HPCBIND_QUEUE_SIZE}
   export HPCBIND_QUEUE_NAME="${HPCBIND_QUEUE_NAME}"
   export HPCBIND_QUEUE_MAPPING=${HPCBIND_QUEUE_MAPPING}
 fi
