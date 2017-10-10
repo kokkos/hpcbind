@@ -180,7 +180,7 @@ HPCBIND_OPENMP_PLACES=${OMP_PLACES:-threads}
 declare -i HPCBIND_OPENMP_PROC_BIND=1
 declare -i HPCBIND_OPENMP_FORCE_NUM_THREADS=-1
 HPCBIND_OPENMP_FORCE_PROC_BIND=""
-HPCBIND_OPENMP_NESTED=${OMP_NESTED:-true}
+declare -i HPCBIND_OPENMP_NESTED=1
 declare -i HPCBIND_VERBOSE=0
 
 declare -i HPCBIND_LSTOPO=0
@@ -251,7 +251,7 @@ for i in "$@"; do
       shift
       ;;
     --no-openmp-nested)
-      HPCBIND_OPENMP_NESTED="false"
+      HPCBIND_OPENMP_NESTED=0
       shift
       ;;
     --output-prefix=*)
@@ -428,7 +428,11 @@ fi
 ################################################################################
 
 # set OMP_NUM_THREADS
-export OMP_NUM_THREADS=${HPCBIND_OPENMP_NUM_THREADS}
+if [[ ${HPCBIND_OPENMP_NESTED} -eq 1 ]]; then
+  export OMP_NUM_THREADS="${HPCBIND_OPENMP_NUM_THREADS},1"
+else
+  export OMP_NUM_THREADS=${HPCBIND_OPENMP_NUM_THREADS}
+fi
 
 # set OMP_PROC_BIND and OMP_PLACES
 if [[ ${HPCBIND_OPENMP_PROC_BIND} -eq 1 ]]; then
@@ -436,7 +440,11 @@ if [[ ${HPCBIND_OPENMP_PROC_BIND} -eq 1 ]]; then
     #default proc bind logic
     if [[ "${HPCBIND_OPENMP_VERSION}" == "4.0" || "${HPCBIND_OPENMP_VERSION}" > "4.0" ]]; then
       export OMP_PLACES="${HPCBIND_OPENMP_PLACES}"
-      export OMP_PROC_BIND="spread"
+      if [[ ${HPCBIND_OPENMP_NESTED} -eq 1 ]]; then
+        export OMP_PROC_BIND="spread,spread"
+      else
+        export OMP_PROC_BIND="spread"
+      fi
     else
       export OMP_PROC_BIND="true"
       unset OMP_PLACES
@@ -452,9 +460,16 @@ else
   unset OMP_PROC_BIND
 fi
 
-# set OMP_NESTED
-export OMP_NESTED=${HPCBIND_OPENMP_NESTED}
+# set up hot teams (intel specific)
+if [[ ${HPCBIND_OPENMP_NESTED} -eq 1 ]]; then
+  export KMP_HOT_TEAMS=1
+  export KMP_HOT_TEAMS_MAX_LEVEL=2
+  export OMP_NESTED="true"
+else
+  export OMP_NESTED="false"
+fi
 
+# set OMP_NESTED
 
 ################################################################################
 # Set CUDA environment variables
