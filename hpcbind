@@ -398,7 +398,7 @@ if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
   fi
   HPCBIND_NUM_PUS=$(hwloc-calc -N pu ${HPCBIND_HWLOC_CPUSET} )
   HPCBIND_NUM_CORES=$(hwloc-calc -N core ${HPCBIND_HWLOC_CPUSET} )
-  HPCBIND_NUM_NUMAS=$(hwloc-calc -N numa ${HPCBIND_HWLOC_CPUSET} )
+  HPCBIND_NUM_NUMAS=$(hwloc-calc -N numanode ${HPCBIND_HWLOC_CPUSET} )
   HPCBIND_NUM_SOCKETS=$(hwloc-calc -N socket ${HPCBIND_HWLOC_CPUSET} )
 else
   HPCBIND_NUM_PUS=$(cat /proc/cpuinfo | grep -c processor)
