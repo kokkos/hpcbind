@@ -550,9 +550,11 @@ else
   echo "${TMP_ENV}" | grep -E "^CUDA_" > >(tee -a ${HPCBIND_LOG})
   echo "[OPENMP]" > >(tee -a ${HPCBIND_LOG})
   echo "${TMP_ENV}" | grep -E "^OMP_" > >(tee -a ${HPCBIND_LOG})
-  echo "[KMP]" > >(tee -a ${HPCBIND_LOG})
+  echo "[GOMP] (gcc, g++, and gfortran)" > >(tee -a ${HPCBIND_LOG})
+  echo "${TMP_ENV}" | grep -E "^GOMP_" > >(tee -a ${HPCBIND_LOG})
+  echo "[KMP] (icc, icpc, and ifort)" > >(tee -a ${HPCBIND_LOG})
   echo "${TMP_ENV}" | grep -E "^KMP_" > >(tee -a ${HPCBIND_LOG})
-  echo "[XLSMPOPTS]" > >(tee -a ${HPCBIND_LOG})
+  echo "[XLSMPOPTS] (xlc, xlc++, and xlf)" > >(tee -a ${HPCBIND_LOG})
   echo "${TMP_ENV}" | grep -E "^XLSMPOPTS" > >(tee -a ${HPCBIND_LOG})
 
   if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
