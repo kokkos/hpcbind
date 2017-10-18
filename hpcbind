@@ -123,8 +123,6 @@ function show_help {
   echo "                        Default: 4.0"
   echo "  --openmp-ratio=N      Divide ratio of the cpuset to use for OpenMP"
   echo "                        Default: 1"
-  echo "  --openmp-percent=N    [DEPRECATED] Integer percentage of cpuset to use for OpenMP"
-  echo "                        threads  Default: 100"
   echo "  --openmp-places=<Op>  Op=threads|cores|sockets. Default: threads"
   echo "  --no-openmp-proc-bind Set OMP_PROC_BIND to false and unset OMP_PLACES"
   echo "  --force-openmp-num-threads=N"
@@ -234,10 +232,6 @@ for i in "$@"; do
       ;;
     --openmp-ratio=*)
       HPCBIND_OPENMP_RATIO="${i#*=}"
-      shift
-      ;;
-    --openmp-percent=*)
-      HPCBIND_OPENMP_RATIO=$(100 / ${i#*=})
       shift
       ;;
     --openmp-places=*)
@@ -402,10 +396,10 @@ if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
   else
     HPCBIND_HWLOC_CPUSET="${BINDING}"
   fi
-  HPCBIND_NUM_PUS=$(hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only pu | wc -l)
-  HPCBIND_NUM_CORES=$(hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only core | wc -l)
-  HPCBIND_NUM_NUMAS=$(hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only numa | wc -l)
-  HPCBIND_NUM_SOCKETS=$(hwloc-ls --restrict ${HPCBIND_HWLOC_CPUSET} --only socket | wc -l)
+  HPCBIND_NUM_PUS=$(hwloc-calc -N pu ${HPCBIND_HWLOC_CPUSET} )
+  HPCBIND_NUM_CORES=$(hwloc-calc -N core ${HPCBIND_HWLOC_CPUSET} )
+  HPCBIND_NUM_NUMAS=$(hwloc-calc -N numa ${HPCBIND_HWLOC_CPUSET} )
+  HPCBIND_NUM_SOCKETS=$(hwloc-calc -N socket ${HPCBIND_HWLOC_CPUSET} )
 else
   HPCBIND_NUM_PUS=$(cat /proc/cpuinfo | grep -c processor)
   HPCBIND_NUM_CORES=${HPCBIND_NUM_PUS}
@@ -496,7 +490,7 @@ export HPCBIND_HAS_NVIDIA=${HPCBIND_HAS_NVIDIA}
 export HPCBIND_NUM_PUS=${HPCBIND_NUM_PUS}
 export HPCBIND_NUM_CORES=${HPCBIND_NUM_CORES}
 export HPCBIND_NUM_NUMAS=${HPCBIND_NUM_NUMAS}
-export HPCBIND_NUM_SOCKET=${HPCBIND_NUM_SOCKET}
+export HPCBIND_NUM_SOCKETS=${HPCBIND_NUM_SOCKETS}
 export HPCBIND_HWLOC_CPUSET="${HPCBIND_HWLOC_CPUSET}"
 export HPCBIND_HWLOC_DISTRIBUTE=${HPCBIND_DISTRIBUTE}
 export HPCBIND_HWLOC_DISTRIBUTE_PARTITION=${HPCBIND_PARTITION}
@@ -534,7 +528,7 @@ if [[ ${HPCBIND_TEE} -eq 0 || ${HPCBIND_VERBOSE} -eq 0 ]]; then
 
   if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
     echo "[BINDINGS]" >> ${HPCBIND_LOG}
-    hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu >> ${HPCBIND_LOG}
+    hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" >> ${HPCBIND_LOG}
   else
     echo "Unable to show bindings, hwloc not available." >> ${HPCBIND_LOG}
   fi
@@ -550,7 +544,7 @@ else
 
   if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
     echo "[BINDINGS]" > >(tee -a ${HPCBIND_LOG})
-    hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --only pu > >(tee -a ${HPCBIND_LOG})
+    hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --no-io > >(tee -a ${HPCBIND_LOG})
   else
     echo "Unable to show bindings, hwloc not available." > >(tee -a ${HPCBIND_LOG})
   fi
