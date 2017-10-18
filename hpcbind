@@ -26,6 +26,7 @@ fi
 # Get parent cpuset
 HPCBIND_HWLOC_PARENT_CPUSET=""
 if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
+  HPCBIND_HWLOC_VERSION="$(hwloc-ls --version | cut -d ' ' -f 2)"
   MY_PID="$BASHPID"
   HPCBIND_HWLOC_PARENT_CPUSET="$(hwloc-ps -a --cpuset | grep ${MY_PID} | cut -f 2)"
 fi
@@ -485,6 +486,7 @@ fi
 ################################################################################
 # Set hpcbind environment variables
 ################################################################################
+export HPCBIND_HWLOC_VERSION=${HPCBIND_HWLOC_VERSION}
 export HPCBIND_HAS_HWLOC=${HPCBIND_HAS_HWLOC}
 export HPCBIND_HAS_NVIDIA=${HPCBIND_HAS_NVIDIA}
 export HPCBIND_NUM_PUS=${HPCBIND_NUM_PUS}
@@ -541,10 +543,14 @@ else
   echo "${TMP_ENV}" | grep -E "^CUDA_" > >(tee -a ${HPCBIND_LOG})
   echo "[OPENMP]" > >(tee -a ${HPCBIND_LOG})
   echo "${TMP_ENV}" | grep -E "^OMP_" > >(tee -a ${HPCBIND_LOG})
+  echo "[KMP]" > >(tee -a ${HPCBIND_LOG})
+  echo "${TMP_ENV}" | grep -E "^KMP_" > >(tee -a ${HPCBIND_LOG})
+  echo "[XLSMPOPTS]" > >(tee -a ${HPCBIND_LOG})
+  echo "${TMP_ENV}" | grep -E "^XLSMPOPTS" > >(tee -a ${HPCBIND_LOG})
 
   if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
     echo "[BINDINGS]" > >(tee -a ${HPCBIND_LOG})
-    hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --no-io > >(tee -a ${HPCBIND_LOG})
+    hwloc-ls --restrict "${HPCBIND_HWLOC_CPUSET}" --no-io --no-bridges > >(tee -a ${HPCBIND_LOG})
   else
     echo "Unable to show bindings, hwloc not available." > >(tee -a ${HPCBIND_LOG})
   fi
