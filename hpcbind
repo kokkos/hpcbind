@@ -546,6 +546,12 @@ if [[ ${HPCBIND_TEE} -eq 0 || ${HPCBIND_VERBOSE} -eq 0 ]]; then
   echo "${TMP_ENV}" | grep -E "^CUDA_" >> ${HPCBIND_LOG}
   echo "[OPENMP]" >> ${HPCBIND_LOG}
   echo "${TMP_ENV}" | grep -E "^OMP_" >> ${HPCBIND_LOG}
+  echo "[GOMP] (gcc, g++, and gfortran)" >> ${HPCBIND_LOG}
+  echo "${TMP_ENV}" | grep -E "^GOMP_" >> ${HPCBIND_LOG}
+  echo "[KMP] (icc, icpc, and ifort)" >> ${HPCBIND_LOG}
+  echo "${TMP_ENV}" | grep -E "^KMP_" >> ${HPCBIND_LOG}
+  echo "[XLSMPOPTS] (xlc, xlc++, and xlf)" >> ${HPCBIND_LOG}
+  echo "${TMP_ENV}" | grep -E "^XLSMPOPTS" >> ${HPCBIND_LOG}
 
   if [[ ${HPCBIND_HAS_HWLOC} -eq 1 ]]; then
     echo "[BINDINGS]" >> ${HPCBIND_LOG}
