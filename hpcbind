@@ -452,8 +452,6 @@ else
   export OMP_NUM_THREADS=${HPCBIND_OPENMP_NUM_THREADS}
 fi
 
-export OMP_THREAD_LIMIT=${HPCBIND_NUM_PUS}
-
 # set OMP_PROC_BIND and OMP_PLACES
 if [[ ${HPCBIND_OPENMP_PROC_BIND} -eq 1 ]]; then
   if [[ "${HPCBIND_OPENMP_FORCE_PROC_BIND}" == "" ]]; then
