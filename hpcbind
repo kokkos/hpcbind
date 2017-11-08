@@ -667,6 +667,11 @@ if [[ ${HPCBIND_SAVE_CACHE} -eq 1 ]]; then
   echo "export HPCBIND_NVIDIA_VISIBLE_GPUS=${HPCBIND_NVIDIA_VISIBLE_GPUS}"                >> ${MY_CACHE_FILE}
   echo "export HPCBIND_OPENMP_RATIO=${HPCBIND_OPENMP_RATIO}"                              >> ${MY_CACHE_FILE}
   echo "export HPCBIND_OPENMP_VERSION=${HPCBIND_OPENMP_VERSION}"                          >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_OPENMP_NUM_THREADS=${HPCBIND_OPENMP_NUM_THREADS}"                  >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_OPENMP_NESTED=${HPCBIND_OPENMP_NESTED}"                            >> ${MU_CACHE_FILE}
+  echo "export HPCBIND_OPENMP_PLACES=${HPCBIND_OPENMP_PLACES}"                            >> ${MU_CACHE_FILE}
+  echo "export HPCBIND_OPENMP_PROC_BIND=${HPCBIND_OPENMP_PROC_BIND}"                      >> ${MU_CACHE_FILE}
+  echo "export HPCBIND_OPENMP_FORCE_PROC_BIND=${HPCBIND_OPENMP_FORCE_PROC_BIND}"          >> ${MU_CACHE_FILE}
   echo "export HPCBIND_QUEUE_MAPPING=${HPCBIND_QUEUE_MAPPING}"                            >> ${MY_CACHE_FILE}
   echo "export HPCBIND_QUEUE_NAME=${HPCBIND_QUEUE_NAME}"                                  >> ${MY_CACHE_FILE}
   echo "export HPCBIND_QUEUE_RANK=${HPCBIND_QUEUE_RANK}"                                  >> ${MY_CACHE_FILE}
