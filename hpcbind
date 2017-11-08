@@ -136,11 +136,8 @@ function show_help {
   echo "                        the prefix and N is the rank (no spaces)"
   echo "  --output-mode=<Op>    How console output should be handled."
   echo "                        Options are all, rank0, and none.  Default: rank0"
-  echo "  --save-cache=fname    Save HPCBIND_* variable in file 'fname'"
-  echo "  --load-cache=fname    Load HPCBIND_* variables from file 'fname'"
-  echo "  --load-cache-only     Load HPCBIND_* variables from cache and run command"
-  echo "                        discarding all other setup options."
-  echo "                        Must be used in addition to --load-cache."
+  echo "  --save-cache=prefix   Save HPCBIND_* variable in file with given prefix"
+  echo "  --load-cache=prefix   Load HPCBIND_* variables from file with given prefix"
   echo "  --lstopo              Show bindings in lstopo"
   echo "  -v|--verbose          Print bindings and relevant environment variables"
   echo "  -h|--help             Show this message"
@@ -337,7 +334,7 @@ done
 # Check if we can load from a cache file
 ################################################################################
 if [[ ${HPCBIND_LOAD_CACHE} -eq 1 ]]; then
-  source ${HPCBIND_CACHE_FILE}.${HPCBIND_QUEUE_RANK}
+  source ${HPCBIND_CACHE_FILE}.${HPCBIND_QUEUE_SIZE}.${HPCBIND_QUEUE_RANK}
 fi
 
 ################################################################################
@@ -651,7 +648,7 @@ fi
 # Check if we need to save to a cache file
 ################################################################################
 if [[ ${HPCBIND_SAVE_CACHE} -eq 1 ]]; then
-  MY_CACHE_FILE=${HPCBIND_CACHE_FILE}.${HPCBIND_QUEUE_RANK}
+  MY_CACHE_FILE=${HPCBIND_CACHE_FILE}.${HPCBIND_QUEUE_SIZE}.${HPCBIND_QUEUE_RANK}
 
   # clean up the cache file
   > ${MY_CACHE_FILE}
