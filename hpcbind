@@ -135,7 +135,12 @@ function show_help {
   echo "                        P.hpcbind.N, P.stdout.N and P.stderr.N where P is "
   echo "                        the prefix and N is the rank (no spaces)"
   echo "  --output-mode=<Op>    How console output should be handled."
-  echo "                        Options are all, rank0, and none.  Default: rank0" 
+  echo "                        Options are all, rank0, and none.  Default: rank0"
+  echo "  --save-cache=fname    Save HPCBIND_* variable in file 'fname'"
+  echo "  --load-cache=fname    Load HPCBIND_* variables from file 'fname'"
+  echo "  --load-cache-only     Load HPCBIND_* variables from cache and run command"
+  echo "                        discarding all other setup options."
+  echo "                        Must be used in addition to --load-cache."
   echo "  --lstopo              Show bindings in lstopo"
   echo "  -v|--verbose          Print bindings and relevant environment variables"
   echo "  -h|--help             Show this message"
@@ -196,6 +201,11 @@ declare -i HPCBIND_LSTOPO=0
 
 HPCBIND_OUTPUT_PREFIX=""
 HPCBIND_OUTPUT_MODE="rank0"
+
+declare -i HPCBIND_LOAD_CACHE=0
+declare -i HPCBIND_LOAD_CACHE=0
+HPCBIND_CACHE_FILE=""
+declare -i HPCBIND_LOAD_ONLY=0
 
 declare -i HPCBIND_HAS_COMMAND=0
 
@@ -295,6 +305,16 @@ for i in "$@"; do
       HPCBIND_VERBOSE=1
       shift
       ;;
+    --save-cache=*)
+      HPCBIND_SAVE_CACHE=1
+      HPCBIND_CACHE_FILE="${i#*=}"
+      shift
+      ;;
+    --load-cache=*)
+      HPCBIND_LOAD_CACHE=1
+      HPCBIND_CACHE_FILE="${i#*=}"
+      shift
+      ;;
     -h|--help)
       show_help
       exit 0
@@ -312,6 +332,14 @@ for i in "$@"; do
       ;;
   esac
 done
+
+################################################################################
+# Check if we can load from a cache file
+################################################################################
+if [[ ${HPCBIND_LOAD_CACHE} -eq 1 ]]; then
+  echo "HPCBIND loading settings from file '${HPCBIND_CACHE_FILE}' and discarding other settings."
+  source ${HPCBIND_CACHE_FILE}.${HPCBIND_QUEUE_RANK}
+fi
 
 ################################################################################
 # Check output mode
@@ -376,58 +404,65 @@ fi
 ################################################################################
 #choose the correct partition
 ################################################################################
-if [[ ${HPCBIND_PARTITION} -lt 0 && ${HPCBIND_QUEUE_MAPPING} -eq 1 ]]; then
-  HPCBIND_PARTITION=${HPCBIND_QUEUE_RANK}
-elif [[ ${HPCBIND_PARTITION} -lt 0 ]]; then
-  HPCBIND_PARTITION=0
-fi
+if [[ ${HPCBIND_LOAD_CACHE} -eq 0 ]]; then
+  if [[ ${HPCBIND_PARTITION} -lt 0 && ${HPCBIND_QUEUE_MAPPING} -eq 1 ]]; then
+    HPCBIND_PARTITION=${HPCBIND_QUEUE_RANK}
+  elif [[ ${HPCBIND_PARTITION} -lt 0 ]]; then
+    HPCBIND_PARTITION=0
+  fi
 
-if [[ ${HPCBIND_PARTITION} -ge ${HPCBIND_DISTRIBUTE} ]]; then
-  HPCBIND_PARTITION=$((HPCBIND_PARTITION % HPCBIND_DISTRIBUTE))
+  if [[ ${HPCBIND_PARTITION} -ge ${HPCBIND_DISTRIBUTE} ]]; then
+    HPCBIND_PARTITION=$((HPCBIND_PARTITION % HPCBIND_DISTRIBUTE))
+  fi
 fi
 
 ################################################################################
 # Find cpuset and num threads
 ################################################################################
-HPCBIND_HWLOC_CPUSET=""
-declare -i HPCBIND_NUM_PUS=0
 
-if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
-  if [[ "${HPCBIND_HWLOC_PARENT_CPUSET}" == "" ]]; then
-    BINDING=$(hwloc-calc ${HPCBIND_PROC_BIND[*]})
-  else
-    BINDING=$(hwloc-calc --restrict ${HPCBIND_HWLOC_PARENT_CPUSET} ${HPCBIND_PROC_BIND[*]})
-  fi
+# Check if we can load from a cache file
+if [[ ${HPCBIND_LOAD_CACHE} -eq 0 ]]; then
+  HPCBIND_HWLOC_CPUSET=""
+  declare -i HPCBIND_NUM_PUS=0
 
-  if [[ ${HPCBIND_DISTRIBUTE} -gt 1 ]]; then
-    CPUSETS=($(hwloc-distrib --restrict ${BINDING} --at core ${HPCBIND_DISTRIBUTE}))
-    HPCBIND_HWLOC_CPUSET="${CPUSETS[${HPCBIND_PARTITION}]}"
-  else
-    HPCBIND_HWLOC_CPUSET="${BINDING}"
+  if [[ ${HPCBIND_LOAD_CACHE} -eq 0 ]]; then
+    if [[ ${HPCBIND_ENABLE_HWLOC_BIND} -eq 1 ]]; then
+      if [[ "${HPCBIND_HWLOC_PARENT_CPUSET}" == "" ]]; then
+        BINDING=$(hwloc-calc ${HPCBIND_PROC_BIND[*]})
+      else
+        BINDING=$(hwloc-calc --restrict ${HPCBIND_HWLOC_PARENT_CPUSET} ${HPCBIND_PROC_BIND[*]})
+      fi
+
+      if [[ ${HPCBIND_DISTRIBUTE} -gt 1 ]]; then
+        CPUSETS=($(hwloc-distrib --restrict ${BINDING} --at core ${HPCBIND_DISTRIBUTE}))
+        HPCBIND_HWLOC_CPUSET="${CPUSETS[${HPCBIND_PARTITION}]}"
+      else
+        HPCBIND_HWLOC_CPUSET="${BINDING}"
+      fi
+      HPCBIND_NUM_PUS=$(hwloc-calc -q -N pu ${HPCBIND_HWLOC_CPUSET} )
+      if [ $? -ne 0 ]; then
+        HPCBIND_NUM_PUS=1
+      fi
+      HPCBIND_NUM_CORES=$(hwloc-calc -q -N core ${HPCBIND_HWLOC_CPUSET} )
+      if [ $? -ne 0 ]; then
+        HPCBIND_NUM_CORES=1
+      fi
+      HPCBIND_NUM_NUMAS=$(hwloc-calc -q -N numa ${HPCBIND_HWLOC_CPUSET} )
+      if [ $? -ne 0 ]; then
+        HPCBIND_NUM_NUMAS=1
+      fi
+      HPCBIND_NUM_SOCKETS=$(hwloc-calc -q -N socket ${HPCBIND_HWLOC_CPUSET} )
+      if [ $? -ne 0 ]; then
+        HPCBIND_NUM_SOCKETS=1
+      fi
+    else
+      HPCBIND_NUM_PUS=$(cat /proc/cpuinfo | grep -c processor)
+      HPCBIND_NUM_CORES=${HPCBIND_NUM_PUS}
+      HPCBIND_NUM_NUMAS=1
+      HPCBIND_NUM_SOCKETS=1
+    fi
   fi
-  HPCBIND_NUM_PUS=$(hwloc-calc -q -N pu ${HPCBIND_HWLOC_CPUSET} )
-  if [ $? -ne 0 ]; then
-    HPCBIND_NUM_PUS=1
-  fi
-  HPCBIND_NUM_CORES=$(hwloc-calc -q -N core ${HPCBIND_HWLOC_CPUSET} )
-  if [ $? -ne 0 ]; then
-    HPCBIND_NUM_CORES=1
-  fi
-  HPCBIND_NUM_NUMAS=$(hwloc-calc -q -N numa ${HPCBIND_HWLOC_CPUSET} )
-  if [ $? -ne 0 ]; then
-    HPCBIND_NUM_NUMAS=1
-  fi
-  HPCBIND_NUM_SOCKETS=$(hwloc-calc -q -N socket ${HPCBIND_HWLOC_CPUSET} )
-  if [ $? -ne 0 ]; then
-    HPCBIND_NUM_SOCKETS=1
-  fi
-else
-  HPCBIND_NUM_PUS=$(cat /proc/cpuinfo | grep -c processor)
-  HPCBIND_NUM_CORES=${HPCBIND_NUM_PUS}
-  HPCBIND_NUM_NUMAS=1
-  HPCBIND_NUM_SOCKETS=1
 fi
-
 
 if [[ ${HPCBIND_OPENMP_FORCE_NUM_THREADS} != "" ]]; then
   HPCBIND_OPENMP_NUM_THREADS=${HPCBIND_OPENMP_FORCE_NUM_THREADS}
@@ -611,4 +646,34 @@ elif [[ ${HPCBIND_HAS_COMMAND} -eq 1 ]]; then
       eval $@ > >(tee ${HPCBIND_OUT}) 2> >(tee ${HPCBIND_ERR} >&2)
     fi
   fi
+fi
+
+################################################################################
+# Check if we need to save to a cache file
+################################################################################
+if [[ ${HPCBIND_SAVE_CACHE} -eq 1 ]]; then
+  MY_CACHE_FILE=${HPCBIND_CACHE_FILE}.${HPCBIND_QUEUE_RANK}
+
+  # clean up the cache file
+  > ${MY_CACHE_FILE}
+
+  echo "export HPCBIND_HWLOC_CPUSET=${HPCBIND_HWLOC_CPUSET}"                              >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_HWLOC_DISTRIBUTE=${HPCBIND_HWLOC_DISTRIBUTE}"                      >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_HWLOC_DISTRIBUTE_PARTITION=${HPCBIND_HWLOC_DISTRIBUTE_PARTITION}"  >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_HWLOC_PARENT_CPUSET=${HPCBIND_HWLOC_PARENT_CPUSET}"                >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_HWLOC_PROC_BIND=${HPCBIND_HWLOC_PROC_BIND}"                        >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_HWLOC_VERSION=${HPCBIND_HWLOC_VERSION}"                            >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_NUM_CORES=${HPCBIND_NUM_CORES}"                                    >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_NUM_NUMAS=${HPCBIND_NUM_NUMAS}"                                    >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_NUM_PUS=${HPCBIND_NUM_PUS}"                                        >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_NUM_SOCKETS=${HPCBIND_NUM_SOCKETS}"                                >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_NVIDIA_ENABLE_GPU_MAPPING=${HPCBIND_NVIDIA_ENABLE_GPU_MAPPING}"    >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_NVIDIA_VISIBLE_GPUS=${HPCBIND_NVIDIA_VISIBLE_GPUS}"                >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_OPENMP_RATIO=${HPCBIND_OPENMP_RATIO}"                              >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_OPENMP_VERSION=${HPCBIND_OPENMP_VERSION}"                          >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_QUEUE_MAPPING=${HPCBIND_QUEUE_MAPPING}"                            >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_QUEUE_NAME=${HPCBIND_QUEUE_NAME}"                                  >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_QUEUE_RANK=${HPCBIND_QUEUE_RANK}"                                  >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_QUEUE_SIZE=${HPCBIND_QUEUE_SIZE}"                                  >> ${MY_CACHE_FILE}
+  echo "export HPCBIND_ENABLE_GPU_MAPPING=${HPCBIND_ENABLE_GPU_MAPPING}"                  >> ${MY_CACHE_FILE}
 fi
