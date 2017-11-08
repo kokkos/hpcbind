@@ -337,7 +337,6 @@ done
 # Check if we can load from a cache file
 ################################################################################
 if [[ ${HPCBIND_LOAD_CACHE} -eq 1 ]]; then
-  echo "HPCBIND loading settings from file '${HPCBIND_CACHE_FILE}' and discarding other settings."
   source ${HPCBIND_CACHE_FILE}.${HPCBIND_QUEUE_RANK}
 fi
 
