@@ -269,11 +269,11 @@ for i in "$@"; do
       HPCBIND_OPENMP_PROC_BIND=0
       shift
       ;;
-    --force-openmp-proc-bind=*)
+    --openmp-proc-bind=*)
       HPCBIND_OPENMP_FORCE_PROC_BIND="${i#*=}"
       shift
       ;;
-    --force-openmp-num-threads=*)
+    --openmp-num-threads=*)
       HPCBIND_OPENMP_FORCE_NUM_THREADS="${i#*=}"
       shift
       ;;
